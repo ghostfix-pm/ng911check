@@ -1,69 +1,79 @@
-"""response_area point-in-polygon attribute-consistency checks (PURE, no arcpy).
+"""response_area point-in-polygon attribute-consistency checks (pure).
 
 Analogous to XLAYER-01 (address ESN vs covering street-side ESN) but using polygon
-CONTAINMENT instead of nearest-street-side: each address point's stored response-area /
-zone field is compared to the key value of the response-area POLYGON that geometrically
-contains the point.
+CONTAINMENT instead of nearest-street-side: each address point's stored response-area or
+zone field is compared to the key value of the polygon that geometrically contains the point.
 
-Each address row dict is pre-annotated by the ResponseAreaChecks.pyt tool with the key
-value of the containing polygon (or None if the point is inside no polygon of that layer)
-under a fixed key:
+The runner annotates each address row with the key value of the containing polygon (or None
+if the point is inside no polygon of that layer) under the key annotation_key(check_id).
+The comparison functions then take annotated row dicts and return ErrorRecord findings. They
+need no geometry library, so the self-test drives them with hand-made annotations.
 
-    row["_ra_key"]   -> ResponseArea.RA_KEY   (RA-01: vs RA_MCFR and RA_OFR)
-    row["_ra_mcso"]  -> RA_MCSO.RA_Code       (RA-02: vs RA_MCSO)
-    row["_pd_id"]   -> PD_Zones.ID           (RA-03: vs PD_ZONE)
-    row["_esn"]      -> NEW_ESN.ESN            (RA-08: vs ESN)
-    row["_city"]     -> ZIPCODE_BOUNDARIES.PO_NAME (RA-09: vs CITY)
+Comparisons are string-normalized via common._clean, which renders a numeric 4.0 as '4' so a
+stored zone '4' matches a polygon key 4.0. rollup() groups the same findings by (containing
+key, stored value) so an analyst fixes a whole zone at once instead of thousands of points.
 
-Comparisons are string-normalized via common._clean, which renders an arcpy Double 4.0
-as '4' so PD_ZONE '4' matches PD_Zones.ID 4.0. These functions take annotated row dicts
-and return legacy_checks.model.ErrorRecord findings (severity is configurable — the tool
-passes the [severity] override from validation_settings.ini), so they are unit-testable
-without arcpy. rollup() groups the same findings by (containing key, stored value) so the
-analyst fixes a whole zone at once instead of thousands of individual points.
+Which address field is compared with which polygon key is a rule (AreaRule). RA-08, RA-09 and
+RA-10 default to the ESN, CITY and ZIP_CODE columns. RA-01, RA-02 and RA-03 carry
+placeholder field names, because the name of an agency's zone column is local: set the real
+column in the [areas] section of the settings file.
 """
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 
-from .model import ErrorRecord, SEVERITY
+from .model import ErrorRecord, SEVERITY, FAMILY
 from .common import _clean
+from . import registry
 
-FAMILY_RA = "response_area"
+# What the [areas] settings line gives: polygon file, key property, optional stored fields,
+# optional sentinel. fields and sentinel are None when the line leaves them to the default.
+AreaSpec = namedtuple("AreaSpec", "path key_prop fields sentinel")
 
-# Fixed annotation keys (see module docstring). The .pyt tool sets these; the comparison
-# functions read them.
-KEY_RA_KEY = "_ra_key"
-KEY_RA_MCSO = "_ra_mcso"
-KEY_PD_ID = "_pd_id"
-KEY_ESN = "_esn"
-KEY_CITY = "_city"
-KEY_ZIP = "_zip"
+AreaRule = namedtuple("AreaRule", "check_id name fields layer_label sentinel")
 
-# check_id -> (check_name, [(stored_field, annotation_key)], layer_label, outside_sentinel)
-_CHECKS = {
-    "RA-01": ("Address RA_MCFR/RA_OFR vs containing ResponseArea RA_KEY",
-              [("RA_MCFR", KEY_RA_KEY), ("RA_OFR", KEY_RA_KEY)], "ResponseArea", None),
-    "RA-02": ("Address RA_MCSO vs containing RA_MCSO polygon RA_Code",
-              [("RA_MCSO", KEY_RA_MCSO)], "RA_MCSO", None),
-    "RA-03": ("Address PD_ZONE vs containing PD_Zones ID",
-              [("PD_ZONE", KEY_PD_ID)], "PD zone", "0"),
-    "RA-08": ("Address ESN vs containing NEW_ESN polygon ESN",
-              [("ESN", KEY_ESN)], "ESN area", None),
-    "RA-09": ("Address CITY vs containing ZIP boundary postal city PO_NAME",
-              [("CITY", KEY_CITY)], "postal city", None),
-    "RA-10": ("Address ZIP_CODE vs containing ZIPCODE_BOUNDARIES polygon ZIP",
-              [("ZIP_CODE", KEY_ZIP)], "ZIP boundary", None),
+# A sentinel is a stored value that legitimately means "outside every polygon of this layer".
+DEFAULT_RULES = {
+    "RA-01": AreaRule("RA-01", "Address response-area fields vs containing response area key",
+                      ("RA_1", "RA_2"), "response area", None),
+    "RA-02": AreaRule("RA-02", "Address second response-area field vs containing polygon key",
+                      ("RA_3",), "second response area", None),
+    "RA-03": AreaRule("RA-03", "Address zone field vs containing zone key",
+                      ("ZONE",), "zone", "0"),
+    "RA-08": AreaRule("RA-08", "Address ESN vs containing ESN polygon",
+                      ("ESN",), "ESN area", None),
+    "RA-09": AreaRule("RA-09", "Address CITY vs containing postal city polygon",
+                      ("CITY",), "postal city", None),
+    "RA-10": AreaRule("RA-10", "Address ZIP_CODE vs containing ZIP polygon",
+                      ("ZIP_CODE",), "ZIP boundary", None),
 }
 
 CHECK_IDS = ("RA-01", "RA-02", "RA-03", "RA-08", "RA-09", "RA-10")
 
+# RA-09's "stored CITY is blank but the point is inside a postal city" class. It is a data
+# entry backlog, not a misroute, so it emits at INFO and answers to its own [severity] line.
+BLANK_ID = {"RA-09": "RA-09-BLANK"}
 
-def required_fields(check_id):
+
+def annotation_key(check_id):
+    """The row key the runner fills with the containing polygon's key for this check."""
+    return "_area_" + check_id
+
+
+def resolve_rule(check_id, spec=None):
+    """The default rule for check_id with any [areas] override applied."""
+    rule = DEFAULT_RULES[check_id]
+    if spec is None:
+        return rule
+    return rule._replace(fields=spec.fields or rule.fields,
+                         sentinel=rule.sentinel if spec.sentinel is None else spec.sentinel)
+
+
+def required_fields(check_id, rule=None):
     """The address-side stored field(s) this check compares against the containing polygon.
 
-    The .pyt asserts these exist on the address FC before running the check, so a dropped or
-    renamed field fails loudly (warn-and-skip) instead of collapsing a.get()->None into a
-    false 'blank but inside' finding for every contained point."""
-    return [field for field, _annot in _CHECKS[check_id][1]]
+    The runner asserts these exist on the address layer before running the check, so a dropped
+    or renamed field fails loudly instead of collapsing a.get() to None into a false 'blank but
+    inside' finding for every contained point."""
+    return list((rule or DEFAULT_RULES[check_id]).fields)
 
 
 def _describe(field, stored, poly_val, inside, layer_label, sentinel):
@@ -73,7 +83,7 @@ def _describe(field, stored, poly_val, inside, layer_label, sentinel):
     stored/poly_val are already normalized (upper, _clean). inside is True when the point
     is inside a polygon of this layer (poly_val may still be "" for a null-keyed polygon,
     distinct from inside=False for 'inside no polygon'). sentinel is a stored value that
-    legitimately means 'outside every polygon of this layer' (PD_ZONE '0'); None disables it.
+    legitimately means 'outside every polygon of this layer'; None disables it.
 
     is_blank_inside marks the "field is empty but the point IS inside a polygon" class. It is
     returned here rather than re-derived by callers so the classification and the wording can
@@ -97,98 +107,99 @@ def _describe(field, stored, poly_val, inside, layer_label, sentinel):
     return "point not inside any %s; stored %s '%s'" % (layer_label, field, stored), False
 
 
-def _iter_findings(addresses, check_id):
+def _iter_findings(addresses, check_id, rule=None):
     """Yield (row, field, stored, containing_key_or_None, description, is_blank_inside) for
     each finding of this check. Shared by the ErrorRecord builders and rollup() so both use one
     comparison."""
-    _name, fields, layer_label, sentinel = _CHECKS[check_id]
+    rule = rule or DEFAULT_RULES[check_id]
+    annot = annotation_key(check_id)
     for a in addresses:
-        for field, annot in fields:
+        for field in rule.fields:
             poly_key = a.get(annot)
             inside = poly_key is not None
             stored = _clean(a.get(field)).upper()
             poly_val = _clean(poly_key).upper()
-            desc, blank = _describe(field, stored, poly_val, inside, layer_label, sentinel)
+            desc, blank = _describe(field, stored, poly_val, inside, rule.layer_label,
+                                    rule.sentinel)
             if desc is not None:
                 yield a, field, stored, (poly_val if inside else None), desc, blank
 
 
-def _check(addresses, check_id, severity=SEVERITY.ERROR, blank_severity=None):
+def _check(addresses, check_id, severity=SEVERITY.ERROR, blank_severity=None, rule=None):
     """Build ErrorRecords for one check.
 
     blank_severity, when given, is used for the "stored field is blank but the point is inside
-    a polygon" class instead of severity; None (the default for every check but RA-09) means
-    the whole check emits at one severity."""
-    name = _CHECKS[check_id][0]
+    a polygon" class instead of severity, and those records carry the check's BLANK_ID so the
+    engine applies the matching [severity] line to them. None (the default for every check but
+    RA-09) means the whole check emits at one severity."""
+    rule = rule or DEFAULT_RULES[check_id]
     out = []
-    for a, _field, _stored, _poly, desc, blank in _iter_findings(addresses, check_id):
-        sev = blank_severity if (blank and blank_severity is not None) else severity
-        out.append(ErrorRecord(check_id, name, FAMILY_RA, sev, "address",
-                               a["_OID"], a.get("Site_NGUID", "") or "", desc, a.get("_XY")))
+    for a, _field, _stored, _poly, desc, blank in _iter_findings(addresses, check_id, rule):
+        tiered = blank and blank_severity is not None
+        out.append(ErrorRecord(check_id, rule.name, FAMILY.AREA,
+                               blank_severity if tiered else severity, "address",
+                               a["_OID"], a.get("Site_NGUID", "") or "", desc, a.get("_XY"),
+                               BLANK_ID[check_id] if tiered else None))
     return out
 
 
-def check_ra_01(addresses, severity=SEVERITY.ERROR):
-    """RA-01: address RA_MCFR and RA_OFR each vs containing ResponseArea.RA_KEY (both
-    reported separately)."""
-    return _check(addresses, "RA-01", severity)
+def check_ra_01(addresses, severity=SEVERITY.ERROR, rule=None):
+    """RA-01: each stored response-area field vs the containing response area key (every
+    field reported separately)."""
+    return _check(addresses, "RA-01", severity, rule=rule)
 
 
-def check_ra_02(addresses, severity=SEVERITY.ERROR):
-    """RA-02: address RA_MCSO vs containing RA_MCSO polygon RA_Code."""
-    return _check(addresses, "RA-02", severity)
+def check_ra_02(addresses, severity=SEVERITY.ERROR, rule=None):
+    """RA-02: the second response-area field vs the containing polygon key."""
+    return _check(addresses, "RA-02", severity, rule=rule)
 
 
-def check_ra_03(addresses, severity=SEVERITY.ERROR):
-    """RA-03: address PD_ZONE vs containing PD_Zones.ID ('0' = outside Riverton)."""
-    return _check(addresses, "RA-03", severity)
+def check_ra_03(addresses, severity=SEVERITY.ERROR, rule=None):
+    """RA-03: the stored zone vs the containing zone key ('0' = outside every zone)."""
+    return _check(addresses, "RA-03", severity, rule=rule)
 
 
-def check_ra_08(addresses, severity=SEVERITY.ERROR):
-    """RA-08: address ESN vs containing NEW_ESN polygon ESN.
+def check_ra_08(addresses, severity=SEVERITY.ERROR, rule=None):
+    """RA-08: address ESN vs the containing ESN polygon.
 
-    The polygon ESN is a SmallInteger and the address ESN a 5-char string; _clean renders
-    both to bare digits ('20'), so the comparison is on the value, not the storage type."""
-    return _check(addresses, "RA-08", severity)
-
-
-def check_ra_09(addresses, severity=SEVERITY.ERROR, blank_severity=SEVERITY.INFO):
-    """RA-09: address CITY vs the containing ZIP boundary's PO_NAME (postal city name).
-
-    Read Postal_Cities.CITY until 2026-08-06, when the 911 team retired that layer for
-    ZIPCODE_BOUNDARIES, which carries the postal city as PO_NAME alongside the code.
-
-    Two-tier, like RA-05's enclaves: "CITY is blank but the point is inside postal city X" is a
-    data-entry backlog (measured 2026-07-30, 50,432 of the 50,695 county-wide findings — ~14% of
-    all address points carry no CITY at all) and emits at blank_severity, INFO by default. A
-    stored CITY that DISAGREES with the containing postal city, or that sits outside every
-    postal city, stays at severity: only ~260 findings county-wide, and a wrong CITY feeds
-    MSAG/ALI matching, so demoting the whole check to bury the blanks would bury those too."""
-    return _check(addresses, "RA-09", severity, blank_severity=blank_severity)
+    The polygon ESN may be a number and the address ESN a string; _clean renders both to
+    bare digits ('20'), so the comparison is on the value, not the storage type."""
+    return _check(addresses, "RA-08", severity, rule=rule)
 
 
-def check_ra_10(addresses, severity=SEVERITY.ERROR):
-    """RA-10: address ZIP_CODE vs the containing ZIPCODE_BOUNDARIES polygon's ZIP.
+def check_ra_09(addresses, severity=SEVERITY.ERROR, blank_severity=SEVERITY.INFO, rule=None):
+    """RA-09: address CITY vs the containing postal city polygon.
+
+    Two-tier: "CITY is blank but the point is inside postal city X" is usually a data-entry
+    backlog, far larger than the real disagreements, and emits at blank_severity, INFO by
+    default. A stored CITY that DISAGREES with the containing postal city, or that sits outside
+    every postal city, stays at severity: a wrong CITY feeds MSAG and ALI matching, so demoting
+    the whole check to bury the blanks would bury those too."""
+    return _check(addresses, "RA-09", severity, blank_severity=blank_severity, rule=rule)
+
+
+def check_ra_10(addresses, severity=SEVERITY.ERROR, rule=None):
+    """RA-10: address ZIP_CODE vs the containing ZIP polygon.
 
     The point-in-polygon companion to XLAYER-06, which can only compare an address ZIP to the
-    ZIP recorded on the covering street SIDE: this validates it against the authoritative ZIP
-    boundary itself, so a wrong ZIP is caught even where the centerline attribution agrees with
-    it. ZIP is a 5-digit code on both sides and _clean renders either storage type to bare
-    digits, so the comparison is on the value."""
-    return _check(addresses, "RA-10", severity)
+    ZIP recorded on the covering street SIDE: this validates it against the ZIP boundary
+    itself, so a wrong ZIP is caught even where the centerline attribution agrees with it."""
+    return _check(addresses, "RA-10", severity, rule=rule)
 
 
-def rollup(addresses, check_ids=CHECK_IDS, sample=5):
+def rollup(addresses, check_ids=CHECK_IDS, sample=5, rules=None):
     """Collapse point-level findings into the distinct boundary/stamp mismatches driving
     them: group by (check_id, field, containing key, stored value) -> {count, sample_oids}.
 
-    This is the actionable 'fix a whole zone at once' view — e.g. one row saying 1,240
-    points inside ResponseArea 'MP7B2A' are stamped 'MP7B2'. Sorted by count desc, so the
-    systematic drift (big groups) sits at the top and one-off boundary/moved points fall out
-    at the bottom. Returns a list of dicts."""
+    This is the actionable 'fix a whole zone at once' view: one row saying 1,240 points inside
+    response area 'B2A' are stamped 'B2'. Sorted by count desc (ties by key), so the systematic
+    drift sits at the top and one-off boundary or moved points fall out at the bottom. Returns
+    a list of dicts."""
+    rules = rules or {}
     groups = defaultdict(lambda: {"count": 0, "oids": []})
     for cid in check_ids:
-        for a, field, stored, poly_val, _desc, _blank in _iter_findings(addresses, cid):
+        for a, field, stored, poly_val, _desc, _blank in _iter_findings(
+                addresses, cid, rules.get(cid)):
             key = (cid, field, poly_val if poly_val is not None else "(outside all)", stored)
             g = groups[key]
             g["count"] += 1
@@ -196,5 +207,35 @@ def rollup(addresses, check_ids=CHECK_IDS, sample=5):
                 g["oids"].append(a["_OID"])
     out = [{"check_id": k[0], "field": k[1], "containing": k[2], "stored": k[3],
             "count": v["count"], "sample_oids": v["oids"]} for k, v in groups.items()]
-    out.sort(key=lambda r: -r["count"])
+    out.sort(key=lambda r: (-r["count"], r["check_id"], r["field"], r["containing"],
+                            r["stored"]))
     return out
+
+
+_SUMMARY = {
+    "RA-01": "Flag an address whose response-area field disagrees with the area it sits in.",
+    "RA-02": "Flag an address whose second response-area field disagrees with its area.",
+    "RA-03": "Flag an address whose zone field disagrees with the zone it sits in.",
+    "RA-08": "Flag an address whose ESN disagrees with the ESN polygon it sits in.",
+    "RA-09": "Flag an address whose CITY disagrees with the postal city it sits in.",
+    "RA-10": "Flag an address whose ZIP_CODE disagrees with the ZIP polygon it sits in.",
+}
+
+
+def _register(check_id):
+    def run(addresses, streets, ctx):
+        rule = ctx.area_rules.get(check_id)
+        if check_id == "RA-09":
+            return check_ra_09(addresses, rule=rule)
+        return _check(addresses, check_id, rule=rule)
+    run.__name__ = "run_" + check_id.lower().replace("-", "_")
+    registry.check(
+        id=check_id, family=FAMILY.AREA, severity=SEVERITY.ERROR, priority="v1",
+        target="address", default_on=False, emits=(SEVERITY.ERROR, SEVERITY.INFO) if check_id == "RA-09"
+        else (SEVERITY.ERROR,),
+        summary=_SUMMARY[check_id], fields=DEFAULT_RULES[check_id].fields + ("Site_NGUID",),
+        requires=("area:" + check_id,))(run)
+
+
+for _cid in CHECK_IDS:
+    _register(_cid)

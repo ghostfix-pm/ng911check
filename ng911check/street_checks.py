@@ -1,4 +1,4 @@
-"""street_attr checks. See spec docs/superpowers/specs/2026-06-02-911-validation-toolbox-design.md."""
+"""street_attr checks: one centerline segment at a time, plus the range and name tests."""
 import re
 from .model import ErrorRecord, SEVERITY, FAMILY
 from .common import (normalize, get_parity, esn_eq, nguid_partition,
@@ -88,8 +88,8 @@ def _side_intervals(streets):
                 yield (truename, pc, lo, hi, s)
 
 
-# Max centroid separation (ftUS) for two same-name segments to be treated as a physically
-# continuous run. Same street name repeats across the county grid; for STREET-12 (range
+# Max centroid separation (feet) for two same-name segments to be treated as a physically
+# continuous run. The same street name repeats across a grid; for STREET-12 (range
 # GAP) this guard is essential — a "gap" between two distinct same-name grid streets is not
 # a defect. (STREET-13 deliberately does NOT use this: an ESN/ZIP change is compared only
 # between range-ADJACENT segments, and a per-segment-centroid test there hid real mid-street
@@ -295,7 +295,7 @@ def check_street_08(addresses, streets, ctx):
         # Case-insensitive: the authority is a domain (case-insensitive by RFC); matches ADDR-06.
         if not (auth.casefold() == agid.casefold() == ctx.expected_agid.casefold()):
             emit(SEVERITY.ERROR, "authority '%s' / DiscrpAgID '%s' != expected '%s'" % (auth, agid, ctx.expected_agid))
-        # _clean, not str: arcpy returns the Double SEGMENT_ID as 36247.0, which would make
+        # _clean, not str: a numeric SEGMENT_ID can arrive as 36247.0, which would make
         # every conforming 'RCL36247' localid mismatch. A genuinely non-integral or null id
         # still renders visibly and still fires.
         if loc != "RCL" + _clean(s.get("SEGMENT_ID")):
@@ -355,14 +355,14 @@ def _authoritative_has(names, community, name_key):
 
 def _street_name_candidates(s, cw=None):
     """Candidate name keys for matching a centerline against the authoritative list.
-    The authoritative DOMAINSTREETNAMES stores names WITHOUT the prefix directional
+    An authoritative name table often stores names WITHOUT the prefix directional
     (e.g. '38TH AVE', '54TH LANE', '196TH'), so we compare prefix-stripped forms and
     tolerate type/suffix being present or absent in either source."""
     name, typ, suf = s.get("NAME"), s.get("TYPE"), s.get("SUFFIX")
     cands = {normalize(name, typ, suf), normalize(name, typ),
              normalize(name, suf), normalize(name)}
-    # Example stores grid roads as the bare ordinal ('46TH') while a centerline NAME may
-    # embed a type word ('46TH PLACE', NAME='46TH PLACE' TYPE='RD'). Strip a trailing
+    # A name table may store grid roads as the bare ordinal ('46TH') while a centerline NAME
+    # may embed a type word ('46TH PLACE', NAME='46TH PLACE' TYPE='RD'). Strip a trailing
     # type word from NAME so the bare-ordinal candidate matches the authoritative list.
     if cw is not None:
         toks = normalize(name).split()
@@ -375,7 +375,7 @@ def _street_name_candidates(s, cw=None):
 
 
 def _is_county_wide_name(c):
-    """A single numeric-leading token ('46TH', '318', '464B') is a county grid/route
+    """A single numeric-leading token ('46TH', '318', '464B') is a grid or route
     name, valid anywhere regardless of which communities the master list enumerates."""
     return bool(c) and len(c.split()) == 1 and c[0].isdigit()
 
@@ -427,7 +427,7 @@ def check_street_11(addresses, streets, ctx):
         if not overlaps:
             # Degraded fuzzy mode (no authoritative list) is a heuristic that false-positives
             # on legitimate one-off names, so it emits INFO. The AUTHORITATIVE branch above
-            # stays WARNING, so the MSAG tool (which loads DOMAINSTREETNAMES) still surfaces
+            # stays WARNING, so a run with --msag (which loads a name list) still surfaces
             # real 'name not in master list' findings. (This replaces the blanket
             # [severity] STREET-11 = INFO, which had muted the authoritative branch too.)
             out.append(ErrorRecord("STREET-11", "Invalid road name", FAMILY.STREET,

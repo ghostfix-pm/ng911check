@@ -1,4 +1,4 @@
-"""address_attr checks. See spec docs/superpowers/specs/2026-06-02-911-validation-toolbox-design.md."""
+"""address_attr checks: one address point at a time, plus the whole-layer duplicate test."""
 import re
 
 from .model import ErrorRecord, SEVERITY, FAMILY
@@ -101,8 +101,8 @@ def check_addr_03(addresses, streets, ctx):
         if not is_addressable(a):
             continue
         num = a.get("Add_Number")   # is_addressable guarantees a positive int-coercible value
-        # Example's ADDRESS includes SUFFIX, BLDG and UNIT when present
-        # (concatenate_and_trim_with_number convention), not just the base name.
+        # The ADDRESS text this check expects includes SUFFIX, BLDG and UNIT when present,
+        # not just the base name.
         bldg = _clean(a.get("BLDG"))
         unit = _clean(a.get("UNIT"))
         # When the UNIT field merely duplicates BLDG (e.g. BLDG='BLDG 23',
@@ -161,7 +161,7 @@ def check_addr_05(addresses, streets, ctx):
             emit(SEVERITY.WARNING, "STATUS '%s' not in domain (expected ACTIVE)" % status)
 
         esn = _clean(a.get("ESN"))
-        # int(esn) > 0 rejects a sentinel/placeholder ESN of 0 (arcpy Double 0.0 -> "0"),
+        # int(esn) > 0 rejects a sentinel/placeholder ESN of 0 (a numeric 0.0 -> "0"),
         # which is a valid 1-digit numeric string but not a real emergency service number.
         if esn and not (esn.isdigit() and 1 <= len(esn) <= 5 and int(esn) > 0):   # blank = ADDR-01's job
             emit(SEVERITY.ERROR, "ESN '%s' not a valid 1-5 digit ESN" % esn)
