@@ -1,15 +1,16 @@
-"""address_attr checks. See spec docs/superpowers/specs/2026-06-02-911-validation-toolbox-design.md."""
+"""address_attr checks: one address point at a time, plus the whole-layer duplicate test."""
 import re
 
 from .model import ErrorRecord, SEVERITY, FAMILY
-from .common import (normalize, get_parity, esn_eq, nguid_partition,
-                     side_of_line, p_distance, addr_name_key, street_name_key, _clean,
-                     is_addressable)
+from .common import normalize, nguid_partition, _clean, is_addressable
 from . import registry
 
 
 @registry.check(id="ADDR-02", family=FAMILY.ADDRESS, severity=SEVERITY.ERROR,
-                priority="v1-core", target="address")
+                priority="v1-core", target="address",
+                emits=(SEVERITY.ERROR,), summary="Flag two address points that share one full address in one city.",
+                fields=("ADDRESS", "Add_Number", "BLDG", "CITY", "PREFIX", "STREET_NA",
+                        "SUFFIX", "Site_NGUID", "TYPE", "UNIT",), requires=())
 def check_addr_02(addresses, streets, ctx):
     from collections import defaultdict
     groups = defaultdict(list)
@@ -67,7 +68,11 @@ def check_addr_02(addresses, streets, ctx):
 
 
 @registry.check(id="ADDR-01", family=FAMILY.ADDRESS, severity=SEVERITY.ERROR,
-                priority="v1", target="address")
+                priority="v1", target="address",
+                emits=(SEVERITY.ERROR,), summary="Flag an address point that has an empty required field.",
+                fields=("Add_Number", "CITY", "COUNTY", "Country", "DiscrpAgID", "ESN",
+                        "INC_MUNI", "STATE", "STATUS", "STREET_NA",
+                        "Site_NGUID", "St_Name", "ZIP_CODE",), requires=())
 def check_addr_01(addresses, streets, ctx):
     out = []
     for a in addresses:
@@ -94,15 +99,18 @@ def check_addr_01(addresses, streets, ctx):
 
 
 @registry.check(id="ADDR-03", family=FAMILY.ADDRESS, severity=SEVERITY.WARNING,
-                priority="v1", target="address")
+                priority="v1", target="address",
+                emits=(SEVERITY.WARNING,), summary="Flag an ADDRESS text that is not the number, name, building and unit joined.",
+                fields=("ADDRESS", "Add_Number", "BLDG", "PREFIX", "STREET_NA", "SUFFIX",
+                        "Site_NGUID", "TYPE", "UNIT",), requires=())
 def check_addr_03(addresses, streets, ctx):
     out = []
     for a in addresses:
         if not is_addressable(a):
             continue
         num = a.get("Add_Number")   # is_addressable guarantees a positive int-coercible value
-        # Example's ADDRESS includes SUFFIX, BLDG and UNIT when present
-        # (concatenate_and_trim_with_number convention), not just the base name.
+        # The ADDRESS text this check expects includes SUFFIX, BLDG and UNIT when present,
+        # not just the base name.
         bldg = _clean(a.get("BLDG"))
         unit = _clean(a.get("UNIT"))
         # When the UNIT field merely duplicates BLDG (e.g. BLDG='BLDG 23',
@@ -124,7 +132,9 @@ def check_addr_03(addresses, streets, ctx):
 
 
 @registry.check(id="ADDR-04", family=FAMILY.ADDRESS, severity=SEVERITY.WARNING,
-                priority="v1", target="address")
+                priority="v1", target="address",
+                emits=(SEVERITY.WARNING,), summary="Flag a HOUSE_NU that does not repeat Add_Number.",
+                fields=("Add_Number", "HOUSE_NU", "Site_NGUID",), requires=())
 def check_addr_04(addresses, streets, ctx):
     out = []
     for a in addresses:
@@ -142,7 +152,10 @@ def check_addr_04(addresses, streets, ctx):
 
 
 @registry.check(id="ADDR-05", family=FAMILY.ADDRESS, severity=SEVERITY.WARNING,
-                priority="v1", target="address")
+                priority="v1", target="address",
+                emits=(SEVERITY.WARNING, SEVERITY.ERROR,), summary="Flag an address STATUS, ESN, ZIP_CODE, number, PREFIX or TYPE outside its domain or bounds.",
+                fields=("Add_Number", "ESN", "PREFIX", "STATUS", "Site_NGUID", "TYPE",
+                                        "ZIP_CODE",), requires=())
 def check_addr_05(addresses, streets, ctx):
     cw = ctx.crosswalks
     out = []
@@ -161,7 +174,7 @@ def check_addr_05(addresses, streets, ctx):
             emit(SEVERITY.WARNING, "STATUS '%s' not in domain (expected ACTIVE)" % status)
 
         esn = _clean(a.get("ESN"))
-        # int(esn) > 0 rejects a sentinel/placeholder ESN of 0 (arcpy Double 0.0 -> "0"),
+        # int(esn) > 0 rejects a sentinel/placeholder ESN of 0 (a numeric 0.0 -> "0"),
         # which is a valid 1-digit numeric string but not a real emergency service number.
         if esn and not (esn.isdigit() and 1 <= len(esn) <= 5 and int(esn) > 0):   # blank = ADDR-01's job
             emit(SEVERITY.ERROR, "ESN '%s' not a valid 1-5 digit ESN" % esn)
@@ -186,7 +199,9 @@ def check_addr_05(addresses, streets, ctx):
 
 
 @registry.check(id="ADDR-06", family=FAMILY.ADDRESS, severity=SEVERITY.ERROR,
-                priority="v1", target="address")
+                priority="v1", target="address",
+                emits=(SEVERITY.ERROR,), summary="Flag a Site_NGUID that is not localid@authority for the expected agency.",
+                fields=("DiscrpAgID", "Site_NGUID",), requires=())
 def check_addr_06(addresses, streets, ctx):
     out = []
     for a in addresses:
@@ -209,7 +224,7 @@ def check_addr_06(addresses, streets, ctx):
         agid = _clean(a.get("DiscrpAgID"))
         if not re.fullmatch(r"[A-Za-z0-9_.-]+", loc):
             emit("Site_NGUID localid '%s' has invalid characters" % loc)
-        # Check the NGUID authority always; check DiscrpAgID only when non-blank — a
+        # Check the NGUID authority always; check DiscrpAgID only when non-blank - a
         # blank DiscrpAgID is ADDR-01's missing-field ERROR, not a second ADDR-06 one.
         # Compare case-insensitively: the authority is a domain (case-insensitive by RFC),
         # so 'domain' vs 'Domain' casing is not a real mismatch.
@@ -225,7 +240,10 @@ _PROHIBITED_CHARS = set("\\#^!@")
 
 
 @registry.check(id="ADDR-07", family=FAMILY.ADDRESS, severity=SEVERITY.WARNING,
-                priority="v2", target="both")
+                priority="v2", target="both",
+                emits=(SEVERITY.WARNING,), summary="Flag surrounding spaces, prohibited characters or the text NULL in an address or street field.",
+                fields=("CITY", "LCITY", "NAME", "PREFIX", "RCITY", "RCL_NGUID", "STREET_NA",
+                        "Site_NGUID", "TYPE", "UNIT",), requires=())
 def check_addr_07(addresses, streets, ctx):
     out = []
 
@@ -270,7 +288,9 @@ def check_addr_07(addresses, streets, ctx):
 
 
 @registry.check(id="ADDR-08", family=FAMILY.ADDRESS, severity=SEVERITY.WARNING,
-                priority="v1", target="address")
+                priority="v1", target="address",
+                emits=(SEVERITY.WARNING,), summary="Flag an address point with no usable house number or no street name.",
+                fields=("Add_Number", "Site_NGUID",), requires=())
 def check_addr_08(addresses, streets, ctx):
     """Incomplete / non-addressed points: reported ONCE here so the address-content
     checks (ADDR-01..06, XLAYER-01..04/12) can skip them via is_addressable() without

@@ -1,16 +1,60 @@
-import json
-import os
+"""Street-name domains: directionals and street types, plus any domain the user supplies.
 
-# Reference crosswalk data is bundled inside the package (portable — no machine paths).
-_REF = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reference")
-ADM_DOMAINS = os.path.join(_REF, "adm_domains.json")
-MAPSAG_DOMAINS = os.path.join(_REF, "mapsag_domains.json")
+The built-in tables come from the United States Postal Service, Publication 28, Postal
+Addressing Standards: section 233 (the eight directionals) and Appendix C1 (primary street
+suffix names and their standard abbreviations). No vendor or agency domain file ships with
+this package. A user who needs a stricter or longer list supplies it as a CSV (see
+load_domain_csv) and it is added to the built-ins.
 
-# Hardcoded directional fallback (used only if MapSAG domain is unavailable).
-_DIR = {
-    "N": "NORTH", "S": "SOUTH", "E": "EAST", "W": "WEST",
-    "NE": "NORTHEAST", "NW": "NORTHWEST", "SE": "SOUTHEAST", "SW": "SOUTHWEST",
-}
+Pub 28 lists several commonly used variants for some suffixes (for example AV and AVN for
+AVENUE). Only the primary name and the standard abbreviation are built in, so a variant
+reads as an unmapped TYPE until the user adds it.
+"""
+import csv
+
+DIRECTIONS = (("NORTH", "N"), ("SOUTH", "S"), ("EAST", "E"), ("WEST", "W"),
+              ("NORTHEAST", "NE"), ("NORTHWEST", "NW"), ("SOUTHEAST", "SE"),
+              ("SOUTHWEST", "SW"))
+
+# PRIMARY=ABBREVIATION, Pub 28 Appendix C1.
+_C1 = """
+    ALLEY=ALY ANEX=ANX ARCADE=ARC AVENUE=AVE BAYOU=BYU BEACH=BCH
+    BEND=BND BLUFF=BLF BLUFFS=BLFS BOTTOM=BTM BOULEVARD=BLVD BRANCH=BR
+    BRIDGE=BRG BROOK=BRK BROOKS=BRKS BURG=BG BURGS=BGS BYPASS=BYP
+    CAMP=CP CANYON=CYN CAPE=CPE CAUSEWAY=CSWY CENTER=CTR CENTERS=CTRS
+    CIRCLE=CIR CIRCLES=CIRS CLIFF=CLF CLIFFS=CLFS CLUB=CLB COMMON=CMN
+    COMMONS=CMNS CORNER=COR CORNERS=CORS COURSE=CRSE COURT=CT COURTS=CTS
+    COVE=CV COVES=CVS CREEK=CRK CRESCENT=CRES CREST=CRST CROSSING=XING
+    CROSSROAD=XRD CROSSROADS=XRDS CURVE=CURV DALE=DL DAM=DM DIVIDE=DV
+    DRIVE=DR DRIVES=DRS ESTATE=EST ESTATES=ESTS EXPRESSWAY=EXPY EXTENSION=EXT
+    EXTENSIONS=EXTS FALL=FALL FALLS=FLS FERRY=FRY FIELD=FLD FIELDS=FLDS
+    FLAT=FLT FLATS=FLTS FORD=FRD FORDS=FRDS FOREST=FRST FORGE=FRG
+    FORGES=FRGS FORK=FRK FORKS=FRKS FORT=FT FREEWAY=FWY GARDEN=GDN
+    GARDENS=GDNS GATEWAY=GTWY GLEN=GLN GLENS=GLNS GREEN=GRN GREENS=GRNS
+    GROVE=GRV GROVES=GRVS HARBOR=HBR HARBORS=HBRS HAVEN=HVN HEIGHTS=HTS
+    HIGHWAY=HWY HILL=HL HILLS=HLS HOLLOW=HOLW INLET=INLT ISLAND=IS
+    ISLANDS=ISS ISLE=ISLE JUNCTION=JCT JUNCTIONS=JCTS KEY=KY KEYS=KYS
+    KNOLL=KNL KNOLLS=KNLS LAKE=LK LAKES=LKS LAND=LAND LANDING=LNDG
+    LANE=LN LIGHT=LGT LIGHTS=LGTS LOAF=LF LOCK=LCK LOCKS=LCKS
+    LODGE=LDG LOOP=LOOP MALL=MALL MANOR=MNR MANORS=MNRS MEADOW=MDW
+    MEADOWS=MDWS MEWS=MEWS MILL=ML MILLS=MLS MISSION=MSN MOTORWAY=MTWY
+    MOUNT=MT MOUNTAIN=MTN MOUNTAINS=MTNS NECK=NCK ORCHARD=ORCH OVAL=OVAL
+    OVERPASS=OPAS PARK=PARK PARKS=PARK PARKWAY=PKWY PARKWAYS=PKWY PASS=PASS
+    PASSAGE=PSGE PATH=PATH PIKE=PIKE PINE=PNE PINES=PNES PLACE=PL
+    PLAIN=PLN PLAINS=PLNS PLAZA=PLZ POINT=PT POINTS=PTS PORT=PRT
+    PORTS=PRTS PRAIRIE=PR RADIAL=RADL RAMP=RAMP RANCH=RNCH RAPID=RPD
+    RAPIDS=RPDS REST=RST RIDGE=RDG RIDGES=RDGS RIVER=RIV ROAD=RD
+    ROADS=RDS ROUTE=RTE ROW=ROW RUE=RUE RUN=RUN SHOAL=SHL
+    SHOALS=SHLS SHORE=SHR SHORES=SHRS SKYWAY=SKWY SPRING=SPG SPRINGS=SPGS
+    SPUR=SPUR SPURS=SPUR SQUARE=SQ SQUARES=SQS STATION=STA STRAVENUE=STRA
+    STREAM=STRM STREET=ST STREETS=STS SUMMIT=SMT TERRACE=TER THROUGHWAY=TRWY
+    TRACE=TRCE TRACES=TRCE TRACK=TRAK TRACKS=TRAK TRAFFICWAY=TRFY TRAIL=TRL
+    TRAILS=TRL TRAILER=TRLR TUNNEL=TUNL TURNPIKE=TPKE UNDERPASS=UPAS UNION=UN
+    UNIONS=UNS VALLEY=VLY VALLEYS=VLYS VIADUCT=VIA VIEW=VW VIEWS=VWS
+    VILLAGE=VLG VILLAGES=VLGS VILLE=VL VISTA=VIS WALK=WALK WALKS=WALK
+    WALL=WALL WAY=WAY WAYS=WAYS WELL=WL WELLS=WLS"""
+
+STREET_TYPES = tuple(tuple(item.split("=")) for item in _C1.split())
 
 STATES = {
     "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA", "HI", "ID",
@@ -20,9 +64,9 @@ STATES = {
     "WI", "WY", "DC", "PR", "VI", "GU", "AS", "MP",
 }
 
-FL_COUNTIES = {"EXAMPLE", "ALACHUA", "LAKE", "SUMTER", "CITRUS", "LEVY", "PUTNAM", "VOLUSIA"}
-
 COUNTRIES = {"US", "USA", "UNITED STATES", "UNITED STATES OF AMERICA"}
+
+DOMAIN_KINDS = ("direction", "type", "premod", "postmod", "pretypesep")
 
 
 def county_canonical(name):
@@ -47,10 +91,9 @@ class Crosswalks:
         self._postmod = postmod
         self._pretypesep = pretypesep
         self.states = STATES
-        self.fl_counties = FL_COUNTIES
         self.countries = COUNTRIES
 
-    # --- representative full-name lookups (back-compat) ---
+    # --- representative full-name lookups ---
     def dir_full(self, abbrev):
         return self._dir.get((abbrev or "").strip().upper())
 
@@ -59,18 +102,18 @@ class Crosswalks:
 
     # --- abbreviation membership ---
     def valid_dir_abbrev(self, abbrev):
-        # Accept a known abbreviation OR an already-spelled-out direction (Example may
-        # store 'NORTHWEST' in PREFIX); mirrors valid_type_abbrev.
+        # Accept a known abbreviation OR an already-spelled-out direction ('NORTHWEST'
+        # stored in PREFIX); mirrors valid_type_abbrev.
         v = (abbrev or "").strip().upper()
         return v in self._dir or v in self._dir_values
 
     def valid_type_abbrev(self, abbrev):
         # Valid if it is a known abbreviation OR an already-spelled-out type name
-        # (Example stores e.g. 'VIEW' rather than 'VW'); the crosswalk maps VW<->VIEW.
+        # ('VIEW' stored rather than 'VW'); the crosswalk maps VW<->VIEW.
         v = (abbrev or "").strip().upper()
         return v in self._type or v in self._type_values
 
-    # --- pair validity (handles AVE->AVENUE/AVENIDA, etc.) ---
+    # --- pair validity (handles AVE->AVENUE and any user-supplied alias) ---
     def dir_ok(self, abbrev, full):
         a = (abbrev or "").strip().upper()
         f = (full or "").strip().upper()
@@ -89,11 +132,13 @@ class Crosswalks:
         if (f, a) in self._type_pairs:
             return True
         # Identical values trivially agree (avoids a self-contradictory "X != X"
-        # message when both TYPE and St_PosTyp store the same token, abbrev or full,
-        # e.g. Example's spelled-out 'VIEW' mirrored in St_PosTyp).
+        # message when both TYPE and St_PosTyp store the same token, abbrev or full).
         return bool(a) and a == f
 
-    # --- NENA modifier / separator domains ---
+    # --- NENA modifier / separator domains (user supplied; empty by default) ---
+    def has_modifier_domains(self):
+        return bool(self._premod or self._postmod or self._pretypesep)
+
     def valid_premod(self, v):
         return (v or "").strip().upper() in self._premod
 
@@ -108,20 +153,13 @@ class Crosswalks:
         return county_canonical(name)
 
 
-def _load_json(path):
-    if os.path.exists(path):
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
-
-
 def _pairs_to_maps(pairs):
-    """pairs = [[full, abbrev], ...] -> (abbrev->full map [last wins], set of (abbrev,full))."""
+    """pairs = [(full, abbrev), ...] -> (abbrev->full map, set of (abbrev, full)).
+
+    The shortest full form is the representative (PARK over PARKS), independent of list order."""
     amap, pset = {}, set()
     for full, abbrev in pairs:
         fu, au = full.strip().upper(), abbrev.strip().upper()
-        # Keep the SHORTEST full form as the representative (the canonical singular,
-        # e.g. PARK over PARKS, AVENUE over AVENIDA), independent of list order.
         if au not in amap or len(fu) < len(amap[au]):
             amap[au] = fu
         pset.add((au, fu))
@@ -132,35 +170,51 @@ def _value_set(pairs):
     """All full + abbrev values (upper) for membership tests on modifier/sep domains."""
     s = set()
     for full, abbrev in pairs:
-        s.add(full.strip().upper())
-        s.add(abbrev.strip().upper())
+        for v in (full.strip().upper(), abbrev.strip().upper()):
+            if v:
+                s.add(v)
     return s
 
 
-def load_crosswalks(adm_domains_path=ADM_DOMAINS, mapsag_path=MAPSAG_DOMAINS):
-    """Authoritative source is MapSAG's own domains (mapsag_domains.json); ADM RoadType
-    is a fallback for any type abbreviations MapSAG does not cover."""
-    mapsag = _load_json(mapsag_path)
+def load_domain_csv(path):
+    """Read a user domain file: header `domain,full,abbrev`, one value per row.
 
-    def pairs(key):
-        return mapsag.get(key, {}).get("pairs", [])
+    `domain` is one of direction, type, premod, postmod, pretypesep. `abbrev` may be blank
+    for the three modifier kinds. Returns a list of (domain, full, abbrev). Raises ValueError
+    with the line number on a bad row, because a silently dropped row would shrink a domain."""
+    rows = []
+    with open(path, "r", encoding="utf-8-sig", newline="") as fh:
+        reader = csv.reader(fh)
+        header = [(h or "").strip().lower() for h in next(reader, [])]
+        if header[:3] != ["domain", "full", "abbrev"]:
+            raise ValueError("%s: the header must be domain,full,abbrev" % path)
+        for rec in reader:
+            if not any(c.strip() for c in rec):
+                continue
+            rec = (list(rec) + ["", "", ""])[:3]
+            kind, full, abbrev = rec[0].strip().lower(), rec[1].strip(), rec[2].strip()
+            if kind not in DOMAIN_KINDS:
+                raise ValueError("%s line %d: domain %r is not one of %s"
+                                 % (path, reader.line_num, kind, ", ".join(DOMAIN_KINDS)))
+            if not full:
+                raise ValueError("%s line %d: full is blank" % (path, reader.line_num))
+            if kind in ("direction", "type") and not abbrev:
+                raise ValueError("%s line %d: a %s row needs an abbrev"
+                                 % (path, reader.line_num, kind))
+            rows.append((kind, full, abbrev))
+    return rows
 
-    dir_map, dir_pairs = _pairs_to_maps(pairs("direction"))
-    if not dir_map:
-        dir_map = dict(_DIR)
-        dir_pairs = {(a, f) for a, f in _DIR.items()}
 
-    # type = union of MapSAG pretype + posttype, with ADM RoadType as fallback.
-    type_pairs_list = pairs("pretype") + pairs("posttype")
-    type_map, type_pairs = _pairs_to_maps(type_pairs_list)
-    adm = _load_json(adm_domains_path)
-    rt = adm.get("RoadType", {}).get("values", {})  # {"Rd": "Road", ...}
-    for abbrev, full in rt.items():
-        au, fu = abbrev.strip().upper(), full.strip().upper()
-        type_pairs.add((au, fu))
-        type_map.setdefault(au, fu)   # MapSAG wins; ADM only fills gaps
+def load_crosswalks(extra=None):
+    """The built-in Pub 28 tables plus `extra`, a list of (domain, full, abbrev)."""
+    extra = extra or []
 
+    def of(kind):
+        return [(f, a) for (k, f, a) in extra if k == kind]
+
+    dir_map, dir_pairs = _pairs_to_maps(list(DIRECTIONS) + of("direction"))
+    type_map, type_pairs = _pairs_to_maps(list(STREET_TYPES) + of("type"))
     return Crosswalks(
         dir_map, type_map, dir_pairs, type_pairs,
-        _value_set(pairs("premod")), _value_set(pairs("postmod")), _value_set(pairs("pretypesep")),
+        _value_set(of("premod")), _value_set(of("postmod")), _value_set(of("pretypesep")),
     )

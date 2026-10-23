@@ -1,55 +1,34 @@
-"""Editable calibration settings (validation_settings.ini).
+"""Editable calibration settings (an .ini file).
 
 The 911 GIS analyst edits the .ini; code reads it. Strict validation: an unknown
 key, bad value, or unknown check id fails loud with an actionable message (a silent
 typo must never weaken QC). A missing key falls back to the built-in default, so a
-partial or absent file still loads and behaves as today.
+partial file still loads and behaves as the defaults do.
+
+The rule the file can never break: a [severity] line may raise a finding, but it never
+lowers an ERROR. effective_lines() and override_lines() print what every line did.
 """
-import os
 import configparser
+import math
+import os
 
 from . import registry
+from .model import SEVERITY, RANK, remap_severity
+from .response_area_checks import AreaSpec, CHECK_IDS as AREA_IDS
 
-DEFAULT_FILE = "validation_settings.ini"
-_SECTIONS = {"thresholds", "agency", "names", "checks", "severity"}
+_SECTIONS = {"thresholds", "agency", "names", "checks", "severity", "areas"}
 _SEVERITIES = {"ERROR", "WARNING", "INFO"}
-# Checks that run outside the engine registry (ResponseAreaChecks.pyt) but are still
-# valid [severity]/[checks] ids so the analyst can calibrate them from the same .ini.
-_EXTRA_CHECK_IDS = {"RA-01", "RA-02", "RA-03",           # point-in-polygon attribute checks
-                    "RA-08", "RA-09", "RA-10",           # ESN / postal-city / ZIP containment
-                    "RA-04", "RA-05", "RA-06", "RA-07",  # boundary polygon topology checks
-                    # RA-05's designed-enclave findings (a hole drawn into a SINGLE polygon)
-                    # carry their own severity so they can be raised or demoted apart from the
-                    # real coverage gaps — on PD_Zones they are 25 of the 28 RA-05 findings.
-                    "RA-05-ENCLAVE",
-                    # RA-09's blank-CITY findings, same reason and a far more lopsided split:
-                    # ~99.5% of its county-wide findings are "CITY is blank but the point is
-                    # inside postal city X" (a data-entry backlog) — measured 2026-07-30, 50,432
-                    # of 50,695 — and only ~260 are genuine disagreements that misroute.
-                    # Demoting RA-09 itself would bury those.
-                    "RA-09-BLANK",
-                    # RA-06's endpoint-overshoot findings, same two-tier reason: 166 of the 309
-                    # ResponseArea crossings have under 25 ft in the smaller area and 156 (94%)
-                    # of those end at a road intersection (measured 2026-08-03,
-                    # tools/_evidence/ra06_minor_side.py). They are real geometry, but acting on one
-                    # means splitting a street feet from its end, so they carry their own
-                    # severity and the ~74 substantive crossings keep ERROR.
-                    "RA-06-OVERSHOOT",
-                    "RA-11", "RA-12", "RA-13", "RA-14",  # sided street attribution checks
-                    # RA-11's and RA-13's placeholder findings: a stored code that NO polygon
-                    # in the layer carries, i.e. never assigned rather than wrong. Measured
-                    # 2026-08-04 over 47,239 segments (94,478 sides): ESN '99' on 11,615 sides
-                    # against 150 genuine ESN disagreements, ZIP '99999' on 270 against 746.
-                    # Demoting the parents to clear them would bury the real mismatches.
-                    "RA-11-PLACEHOLDER", "RA-13-PLACEHOLDER"}
-# Ids that exist ONLY to carry a [severity]. RA-05 emits the enclave records, RA-06 the
-# endpoint-overshoot ones and RA-09 the blank-CITY ones, so there is no separate job to switch
-# off: accepting
-# "[checks] RA-05-ENCLAVE = off" would report an active override in effective_lines while the
-# records kept being written — a silent no-op in a file whose whole contract is that a mistake
-# fails loud.
-_SEVERITY_ONLY_IDS = {"RA-05-ENCLAVE", "RA-09-BLANK", "RA-06-OVERSHOOT",
-                      "RA-11-PLACEHOLDER", "RA-13-PLACEHOLDER"}
+
+# Ids that exist ONLY to carry a [severity]. RA-09 emits the blank-CITY class, so there is no
+# separate job to switch off: accepting "[checks] RA-09-BLANK = off" would report an active
+# override in effective_lines while the records kept being written, a silent no-op in a file
+# whose whole contract is that a mistake fails loud.
+_SEVERITY_ONLY_IDS = {"RA-09-BLANK"}
+
+# Ids of sibling topology checks that a shared settings file may still name. This package never
+# runs them, so a line for one is accepted and then reported as having no effect here.
+_FOREIGN_IDS = {"RA-04", "RA-05", "RA-06", "RA-07", "RA-11", "RA-12", "RA-13", "RA-14",
+                "RA-05-ENCLAVE", "RA-06-OVERSHOOT", "RA-11-PLACEHOLDER", "RA-13-PLACEHOLDER"}
 
 # ini key -> (Context attribute, python type)
 _THRESHOLDS = {
@@ -58,25 +37,11 @@ _THRESHOLDS = {
     "max_range_gap": ("max_range_gap", int),
     "distance_tolerance_ft": ("distance_tolerance_ft", float),
     "sync_threshold": ("sync_threshold", float),
-    "geom_xy_tol_deg": ("geom_xy_tol", float),
-    "geom_near_min_ft": ("geom_near_min", float),
-    "geom_near_max_ft": ("geom_near_max", float),
-    "geom_snap_tol_ft": ("geom_snap_tol", float),
-    "geom_isolated_tol_ft": ("geom_isolated_tol", float),
-    "ra_overlap_tol_sqft": ("ra_overlap_tol_sqft", float),
-    "ra_gap_tol_sqft": ("ra_gap_tol_sqft", float),
-    "ra_gap_min_width_ft": ("ra_gap_min_width_ft", float),
-    "ra_coincident_tol_ft": ("ra_coincident_tol_ft", float),
-    "ra_street_edge_tol_ft": ("ra_street_edge_tol_ft", float),
-    "ra_street_along_tol_ft": ("ra_street_along_tol_ft", float),
-    "ra_street_along_share": ("ra_street_along_share", float),
-    "ra_offset_run_min_ft": ("ra_offset_run_min_ft", float),
-    "ra_street_min_span_ft": ("ra_street_min_span_ft", float),
-    "ra_side_offset_ft": ("ra_side_offset_ft", float),
 }
 _AGENCY = {"expected_agid": ("expected_agid", "str"),
            "strict_fqdn": ("strict_fqdn", "bool"),
-           "county_boundary": ("county_boundary_path", "str")}
+           "expected_state": ("expected_state", "state"),
+           "counties": ("counties", "set")}
 
 
 class Settings:
@@ -86,20 +51,8 @@ class Settings:
         self.names_ignored = None   # frozenset[str] or None (None = keep default)
         self.checks = {}            # check_id -> bool (on/off override)
         self.severity = {}          # check_id -> "ERROR|WARNING|INFO"
+        self.areas = {}             # check_id -> response_area_checks.AreaSpec
         self.source = None
-
-
-def default_path():
-    """Locate validation_settings.ini: the toolbox's config/ folder first, then the toolbox
-    root (legacy). Both are anchored to the package location. The current working directory is
-    NOT searched: under ArcGIS Pro the cwd is arbitrary (the Pro project home), so a partial
-    copy missing config/ could otherwise silently pick up a foreign/stale ini from there."""
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    for p in (os.path.join(root, "config", DEFAULT_FILE),
-              os.path.join(root, DEFAULT_FILE)):
-        if os.path.exists(p):
-            return p
-    return None
 
 
 def _to_bool(v):
@@ -109,6 +62,22 @@ def _to_bool(v):
     if s in ("0", "false", "f", "no", "n", "off"):
         return False
     raise ValueError("expected a true/false value, got %r" % v)
+
+
+def _parse_area(cid, value, base):
+    """`file|key[|fields[|sentinel]]`. A relative file is resolved against the settings folder."""
+    parts = [p.strip() for p in value.split("|")]
+    if len(parts) < 2 or len(parts) > 4 or not parts[0] or not parts[1]:
+        raise ValueError("[areas] %s: expected file|key[|fields[|sentinel]], got %r"
+                         % (cid, value))
+    path = parts[0]
+    if not os.path.isabs(path):
+        path = os.path.normpath(os.path.join(base, path))
+    fields = None
+    if len(parts) > 2 and parts[2]:
+        fields = tuple(f.strip() for f in parts[2].split(",") if f.strip())
+    sentinel = parts[3].upper() if len(parts) > 3 and parts[3] else None
+    return AreaSpec(path, parts[1], fields or None, sentinel)
 
 
 def load(path):
@@ -123,7 +92,7 @@ def load(path):
         raise ValueError("Settings file is not UTF-8 text (%s): %s. Re-save it as UTF-8."
                          % (path, e))
     if not read_ok:
-        raise ValueError("Settings file not found or empty: %s" % path)
+        raise ValueError("Settings file not found or unreadable: %s" % path)
     if cp.defaults():
         raise ValueError("A [DEFAULT] section is not allowed in %s (its keys leak into "
                          "every section); move those keys into the section they belong to."
@@ -149,12 +118,8 @@ def load(path):
 
     st = Settings()
     st.source = path
-    from . import all_checks  # noqa: F401  ensure the registry is populated before id checks
-    # RA-01..RA-07 run in ResponseAreaChecks.pyt (outside the engine registry) but are still
-    # configurable here: the .pyt reads st.severity for them. Unlike engine checks there is no
-    # floor-clamp, so a [severity] demote applies straight; they are single-severity apart from
-    # RA-05/RA-06/RA-09, whose split-off classes carry the _SEVERITY_ONLY_IDS lines above.
-    valid_ids = {s.id for s in registry.all_specs()} | _EXTRA_CHECK_IDS
+    registry.load_all()   # the registry must be full before the check ids are validated
+    valid_ids = {s.id for s in registry.all_specs()} | _SEVERITY_ONLY_IDS | _FOREIGN_IDS
 
     for k, v in _items("thresholds"):
         k = k.lower()   # threshold/agency/names keys are case-insensitive (check ids are not)
@@ -166,26 +131,25 @@ def load(path):
             val = typ(v)
         except (TypeError, ValueError):
             raise ValueError("[thresholds] %s: expected %s, got %r" % (k, typ.__name__, v))
-        import math
         if typ is float and not math.isfinite(val):
             raise ValueError("[thresholds] %s: must be a finite number, got %r" % (k, v))
         st.ctx_overrides[attr] = val
 
     for k, v in _items("agency"):
         k = k.lower()
-        if k == "bbox":
-            parts = [p.strip() for p in v.split(",")]
-            if len(parts) != 4:
-                raise ValueError("[agency] bbox needs 4 comma-separated numbers, got %r" % v)
-            try:
-                st.ctx_overrides["bbox"] = tuple(float(p) for p in parts)
-            except ValueError:
-                raise ValueError("[agency] bbox values must be numbers, got %r" % v)
-            continue
         if k not in _AGENCY:
-            raise ValueError("Unknown [agency] key %r" % k)
+            raise ValueError("Unknown [agency] key %r (valid: %s)"
+                             % (k, ", ".join(sorted(_AGENCY))))
         attr, typ = _AGENCY[k]
-        st.ctx_overrides[attr] = _to_bool(v) if typ == "bool" else v
+        if typ == "bool":
+            st.ctx_overrides[attr] = _to_bool(v)
+        elif typ == "state":
+            st.ctx_overrides[attr] = v.strip().upper()
+        elif typ == "set":
+            st.ctx_overrides[attr] = frozenset(
+                x.strip().upper() for x in v.split(",") if x.strip())
+        else:
+            st.ctx_overrides[attr] = v.strip()
 
     for k, v in _items("names"):
         if k.lower() != "ignored":
@@ -197,8 +161,8 @@ def load(path):
         if cid not in valid_ids:
             raise ValueError("[checks] unknown check id %r" % cid)
         if cid in _SEVERITY_ONLY_IDS:
-            # Name the check that actually emits the records — telling an analyst who wrote
-            # "RA-09-BLANK = off" to switch off RA-05 would send them to the wrong tool.
+            # Name the check that actually emits the records: telling an analyst who wrote
+            # "RA-09-BLANK = off" to switch off the wrong id would send them to the wrong line.
             owner = cid.rsplit("-", 1)[0]
             raise ValueError(
                 "[checks] %s is a severity-only id and cannot be switched on or off: %s emits "
@@ -213,6 +177,13 @@ def load(path):
         if sv not in _SEVERITIES:
             raise ValueError("[severity] %s: expected ERROR/WARNING/INFO, got %r" % (cid, v))
         st.severity[cid] = sv
+
+    base = os.path.dirname(os.path.abspath(path))
+    for cid, v in _items("areas"):
+        if cid not in AREA_IDS:
+            raise ValueError("[areas] %r is not an area check (valid: %s)"
+                             % (cid, ", ".join(AREA_IDS)))
+        st.areas[cid] = _parse_area(cid, v, base)
 
     return st
 
@@ -229,47 +200,71 @@ def apply_to_context(ctx, st):
     return ctx
 
 
-def _emits_only_error(check_id):
-    """True if the check's source emits ERROR records and no WARNING/INFO ones — a demote
-    override on it is neutralized by the engine's ERROR floor-clamp. Best-effort source scan."""
-    import inspect
+def _emitted(check_id):
+    """(severities the id can emit, whether its records answer to their own line) or None."""
+    if check_id in _SEVERITY_ONLY_IDS:
+        return ((SEVERITY.INFO,), True)
     spec = registry.get(check_id)
     if spec is None:
-        return False
-    try:
-        src = inspect.getsource(spec.func)
-    except Exception:
-        return False
-    return "SEVERITY.ERROR" in src and "SEVERITY.WARNING" not in src and "SEVERITY.INFO" not in src
+        return None
+    return (spec.emits, False)
+
+
+def override_note(check_id, sv):
+    """Say, before any run, whether a [severity] line can change anything.
+
+    The note comes from remap_severity over the severities the check declares it emits, so it
+    cannot disagree with what the engine does."""
+    known = _emitted(check_id)
+    if known is None:
+        return "  (no effect: %s is not run by this package)" % check_id
+    emits, classed = known
+    changed = [e for e in emits if remap_severity(e, sv, classed) != e]
+    if not changed:
+        if emits == (SEVERITY.INFO,) and not classed:
+            return "  (no effect: emits only INFO findings; cannot be escalated)"
+        if emits == (SEVERITY.ERROR,) and sv != SEVERITY.ERROR:
+            return "  (no effect: emits only ERROR findings; the engine never lowers an ERROR)"
+        return "  (no effect: every finding it emits stays where it is)"
+    if SEVERITY.ERROR in emits and sv != SEVERITY.ERROR and RANK[sv] < RANK[SEVERITY.ERROR]:
+        return "  (ERROR findings stay ERROR; the others become %s)" % sv
+    return ""
 
 
 def effective_lines(st):
-    """Human-readable summary of what the settings actually change (for the GP tool)."""
+    """Human-readable summary of what the settings change, before any run."""
     out = ["Settings source: %s" % (st.source or "(built-in defaults)")]
     if st.ctx_overrides:
         out.append("Thresholds/agency overrides:")
         for k, v in sorted(st.ctx_overrides.items()):
+            if isinstance(v, frozenset):
+                v = ", ".join(sorted(v))
             out.append("  %-24s = %s" % (k, v))
     if st.names_ignored is not None:
         out.append("Ignored street names: %s" % ", ".join(sorted(st.names_ignored)))
     if st.checks:
         out.append("Check on/off overrides:")
         for cid, on in sorted(st.checks.items()):
-            out.append("  %-12s %s" % (cid, "on" if on else "off"))
+            note = "" if cid not in _FOREIGN_IDS else "  (no effect: %s is not run by this package)" % cid
+            out.append("  %-12s %s%s" % (cid, "on" if on else "off", note))
+    if st.areas:
+        out.append("Response-area rules:")
+        for cid, spec in sorted(st.areas.items()):
+            out.append("  %-12s %s key=%s" % (cid, os.path.basename(spec.path), spec.key_prop))
     if st.severity:
         out.append("Severity overrides:")
         for cid, sv in sorted(st.severity.items()):
-            spec = registry.get(cid)
-            # Flag overrides the engine cannot actually apply, so they aren't trusted silently:
-            #  - an INFO-default check emits only INFO findings, which are never escalated;
-            #  - a solely-ERROR check demoted below ERROR is a no-op (the floor-clamp keeps ERROR).
-            if spec is not None and spec.severity == "INFO" and sv != "INFO":
-                note = "  (no effect: emits only INFO findings; cannot be escalated)"
-            elif sv != "ERROR" and _emits_only_error(cid):
-                note = "  (no effect: emits only ERROR findings; the engine never lowers an ERROR)"
-            else:
-                note = ""
-            out.append("  %-12s %s%s" % (cid, sv, note))
+            out.append("  %-12s %s%s" % (cid, sv, override_note(cid, sv)))
     if len(out) == 1:
-        out.append("(no overrides — every check uses its built-in default)")
+        out.append("(no overrides - every check uses its built-in default)")
+    return out
+
+
+def override_lines(tally):
+    """What each [severity] line actually did on this run. `tally` comes from the engine."""
+    out = []
+    for t in tally:
+        out.append("  %-14s %s: %d raised or lowered, %d held at ERROR, %d INFO untouched, "
+                   "%d already %s" % (t["id"], t["override"], t["changed"], t["held"],
+                                      t["info"], t["same"], t["override"]))
     return out

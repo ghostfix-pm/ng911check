@@ -1,9 +1,7 @@
-"""street_attr checks. See spec docs/superpowers/specs/2026-06-02-911-validation-toolbox-design.md."""
+"""street_attr checks: one centerline segment at a time, plus the range and name tests."""
 import re
 from .model import ErrorRecord, SEVERITY, FAMILY
-from .common import (normalize, get_parity, esn_eq, nguid_partition,
-                     side_of_line, p_distance, addr_name_key, street_name_key, _clean,
-                     seg_label)
+from .common import normalize, get_parity, esn_eq, nguid_partition, _clean, seg_label
 from . import registry
 
 
@@ -17,7 +15,9 @@ def _side_parity(frm, to):
 
 
 @registry.check(id="STREET-01", family=FAMILY.STREET, severity=SEVERITY.ERROR,
-                priority="v1-core", target="street")
+                priority="v1-core", target="street",
+                emits=(SEVERITY.ERROR,), summary="Flag a street side whose range ends mix parity, or two sides that share one parity.",
+                fields=("FROMLEFT", "FROMRIGHT", "RCL_NGUID", "TOLEFT", "TORIGHT",), requires=())
 def check_street_01(addresses, streets, ctx):
     out = []
     for s in streets:
@@ -40,7 +40,10 @@ def _par(n):
 
 
 @registry.check(id="STREET-02", family=FAMILY.STREET, severity=SEVERITY.ERROR,
-                priority="v1-core", target="street")
+                priority="v1-core", target="street",
+                emits=(SEVERITY.ERROR, SEVERITY.WARNING,), summary="Flag a declared side parity that the range does not support.",
+                fields=("FROMLEFT", "FROMRIGHT", "Parity_L", "Parity_R", "RCL_NGUID",
+                        "TOLEFT", "TORIGHT",), requires=())
 def check_street_02(addresses, streets, ctx):
     out = []
     for s in streets:
@@ -88,9 +91,9 @@ def _side_intervals(streets):
                 yield (truename, pc, lo, hi, s)
 
 
-# Max centroid separation (ftUS) for two same-name segments to be treated as a physically
-# continuous run. Same street name repeats across the county grid; for STREET-12 (range
-# GAP) this guard is essential — a "gap" between two distinct same-name grid streets is not
+# Max centroid separation (feet) for two same-name segments to be treated as a physically
+# continuous run. The same street name repeats across a grid; for STREET-12 (range
+# GAP) this guard is essential - a "gap" between two distinct same-name grid streets is not
 # a defect. (STREET-13 deliberately does NOT use this: an ESN/ZIP change is compared only
 # between range-ADJACENT segments, and a per-segment-centroid test there hid real mid-street
 # boundaries on long roads, so STREET-13 suppresses only confirmed community crossings.)
@@ -126,7 +129,11 @@ def _confirmed_different_community(a, b):
 
 
 @registry.check(id="STREET-04", family=FAMILY.STREET, severity=SEVERITY.ERROR,
-                priority="v1-core", target="street")
+                priority="v1-core", target="street",
+                emits=(SEVERITY.ERROR,), summary="Flag two segments of one street whose address ranges overlap on one parity.",
+                fields=("FROMLEFT", "FROMRIGHT", "NAME", "PREFIX", "Parity_L", "Parity_R",
+                        "RCL_NGUID", "SEGMENT_ID", "SUFFIX", "TOLEFT",
+                        "TORIGHT", "TYPE",), requires=())
 def check_street_04(addresses, streets, ctx):
     from collections import defaultdict
     buckets = defaultdict(list)
@@ -156,7 +163,10 @@ def check_street_04(addresses, streets, ctx):
 
 
 @registry.check(id="STREET-12", family=FAMILY.STREET, severity=SEVERITY.WARNING,
-                priority="v1", target="street")
+                priority="v1", target="street",
+                emits=(SEVERITY.WARNING,), summary="Flag a gap in the address numbering between two segments of one street.",
+                fields=("FROMLEFT", "FROMRIGHT", "NAME", "PREFIX", "Parity_L", "Parity_R",
+                        "RCL_NGUID", "SUFFIX", "TOLEFT", "TORIGHT", "TYPE",), requires=())
 def check_street_12(addresses, streets, ctx):
     from collections import defaultdict
     buckets = defaultdict(list)
@@ -188,7 +198,10 @@ def _sign(n):
 
 
 @registry.check(id="STREET-03", family=FAMILY.STREET, severity=SEVERITY.WARNING,
-                priority="v1", target="street")
+                priority="v1", target="street",
+                emits=(SEVERITY.ERROR, SEVERITY.WARNING,), summary="Flag a negative range end, a half-zero range or two sides that run in opposite directions.",
+                fields=("FROMLEFT", "FROMRIGHT", "Parity_L", "Parity_R", "RCL_NGUID",
+                        "TOLEFT", "TORIGHT",), requires=())
 def check_street_03(addresses, streets, ctx):
     out = []
     for s in streets:
@@ -219,7 +232,10 @@ def check_street_03(addresses, streets, ctx):
 
 
 @registry.check(id="STREET-06", family=FAMILY.STREET, severity=SEVERITY.WARNING,
-                priority="v1", target="street")
+                priority="v1", target="street",
+                emits=(SEVERITY.WARNING,), summary="Flag two segments of one street that carry an identical range tuple.",
+                fields=("FROMLEFT", "FROMRIGHT", "NAME", "PREFIX", "RCL_NGUID", "SEGMENT_ID",
+                        "SUFFIX", "TOLEFT", "TORIGHT", "TYPE",), requires=())
 def check_street_06(addresses, streets, ctx):
     from collections import defaultdict
     buckets = defaultdict(list)
@@ -243,7 +259,9 @@ def check_street_06(addresses, streets, ctx):
 
 
 @registry.check(id="STREET-05", family=FAMILY.STREET, severity=SEVERITY.ERROR,
-                priority="v1-core", target="street")
+                priority="v1-core", target="street",
+                emits=(SEVERITY.ERROR,), summary="Flag a SEGMENT_ID or RCL_NGUID that appears on more than one segment.",
+                fields=("RCL_NGUID", "SEGMENT_ID",), requires=())
 def check_street_05(addresses, streets, ctx):
     from collections import Counter
     out = []
@@ -259,7 +277,10 @@ def check_street_05(addresses, streets, ctx):
 
 
 @registry.check(id="STREET-07", family=FAMILY.STREET, severity=SEVERITY.ERROR,
-                priority="v1", target="street")
+                priority="v1", target="street",
+                emits=(SEVERITY.ERROR,), summary="Flag a segment that has an address range and no street name.",
+                fields=("FROMLEFT", "FROMRIGHT", "NAME", "RCL_NGUID", "SEGMENT_ID", "TOLEFT",
+                                        "TORIGHT",), requires=())
 def check_street_07(addresses, streets, ctx):
     out = []
     for s in streets:
@@ -274,7 +295,9 @@ def check_street_07(addresses, streets, ctx):
 
 
 @registry.check(id="STREET-08", family=FAMILY.STREET, severity=SEVERITY.ERROR,
-                priority="v1", target="street")
+                priority="v1", target="street",
+                emits=(SEVERITY.ERROR, SEVERITY.WARNING,), summary="Flag an RCL_NGUID that is not RCL plus SEGMENT_ID at the expected agency.",
+                fields=("DiscrpAgID", "RCL_NGUID", "SEGMENT_ID",), requires=())
 def check_street_08(addresses, streets, ctx):
     out = []
     for s in streets:
@@ -295,8 +318,8 @@ def check_street_08(addresses, streets, ctx):
         # Case-insensitive: the authority is a domain (case-insensitive by RFC); matches ADDR-06.
         if not (auth.casefold() == agid.casefold() == ctx.expected_agid.casefold()):
             emit(SEVERITY.ERROR, "authority '%s' / DiscrpAgID '%s' != expected '%s'" % (auth, agid, ctx.expected_agid))
-        # _clean, not str: arcpy returns the Double SEGMENT_ID as 36247.0, which would make
-        # every conforming 'RCL36247' localid mismatch. A genuinely non-integral or null id
+        # _clean, not str: a numeric SEGMENT_ID can arrive as 12345.0, which would make
+        # every conforming 'RCL12345' localid mismatch. A genuinely non-integral or null id
         # still renders visibly and still fires.
         if loc != "RCL" + _clean(s.get("SEGMENT_ID")):
             emit(SEVERITY.WARNING, "localid '%s' != 'RCL'+SEGMENT_ID" % loc)
@@ -307,7 +330,10 @@ _ONEWAY_OK = {"B", "F", "T", "FT", "TF", "FROM-TO", "TO-FROM", "BOTH", "UNKNOWN"
 
 
 @registry.check(id="STREET-09", family=FAMILY.STREET, severity=SEVERITY.ERROR,
-                priority="v1", target="street")
+                priority="v1", target="street",
+                emits=(SEVERITY.ERROR, SEVERITY.WARNING,), summary="Flag a parity or ONEWAY value outside its domain.",
+                fields=("FROMLEFT", "FROMRIGHT", "ONEWAY", "Parity_L", "Parity_R",
+                        "RCL_NGUID", "TOLEFT", "TORIGHT",), requires=())
 def check_street_09(addresses, streets, ctx):
     out = []
     for s in streets:
@@ -355,14 +381,14 @@ def _authoritative_has(names, community, name_key):
 
 def _street_name_candidates(s, cw=None):
     """Candidate name keys for matching a centerline against the authoritative list.
-    The authoritative DOMAINSTREETNAMES stores names WITHOUT the prefix directional
-    (e.g. '38TH AVE', '54TH LANE', '196TH'), so we compare prefix-stripped forms and
+    An authoritative name table often stores names WITHOUT the prefix directional
+    (e.g. '12TH AVE', '30TH LANE', '40TH'), so we compare prefix-stripped forms and
     tolerate type/suffix being present or absent in either source."""
     name, typ, suf = s.get("NAME"), s.get("TYPE"), s.get("SUFFIX")
     cands = {normalize(name, typ, suf), normalize(name, typ),
              normalize(name, suf), normalize(name)}
-    # Example stores grid roads as the bare ordinal ('46TH') while a centerline NAME may
-    # embed a type word ('46TH PLACE', NAME='46TH PLACE' TYPE='RD'). Strip a trailing
+    # A name table may store grid roads as the bare ordinal ('20TH') while a centerline NAME
+    # may embed a type word ('20TH PLACE', NAME='20TH PLACE' TYPE='RD'). Strip a trailing
     # type word from NAME so the bare-ordinal candidate matches the authoritative list.
     if cw is not None:
         toks = normalize(name).split()
@@ -375,13 +401,15 @@ def _street_name_candidates(s, cw=None):
 
 
 def _is_county_wide_name(c):
-    """A single numeric-leading token ('46TH', '318', '464B') is a county grid/route
+    """A single numeric-leading token ('20TH', '99', '12B') is a grid or route
     name, valid anywhere regardless of which communities the master list enumerates."""
     return bool(c) and len(c.split()) == 1 and c[0].isdigit()
 
 
 @registry.check(id="STREET-11", family=FAMILY.STREET, severity=SEVERITY.WARNING,
-                priority="v2", target="street")
+                priority="v2", target="street",
+                emits=(SEVERITY.WARNING, SEVERITY.INFO,), summary="Flag a street name that is not in the authoritative list, or that shares no word with any other name.",
+                fields=("LCITY", "NAME", "PREFIX", "RCITY", "RCL_NGUID", "SUFFIX", "TYPE",), requires=())
 def check_street_11(addresses, streets, ctx):
     """If an authoritative name set is on ctx, flag any street whose name is not
     in it. Otherwise fall back to a degraded fuzzy self-check (no master list)."""
@@ -397,7 +425,7 @@ def check_street_11(addresses, streets, ctx):
             lcity, rcity = s.get("LCITY"), s.get("RCITY")
             cands = _street_name_candidates(s, cw)
             # Match on either side's community, OR (for county-wide grid/route ordinals
-            # like '46TH'/'318') accept membership under any community.
+            # like '20TH'/'99') accept membership under any community.
             if any(_authoritative_has(names, lcity, c) or _authoritative_has(names, rcity, c)
                    or (_is_county_wide_name(c) and c in bare)
                    for c in cands):
@@ -427,7 +455,7 @@ def check_street_11(addresses, streets, ctx):
         if not overlaps:
             # Degraded fuzzy mode (no authoritative list) is a heuristic that false-positives
             # on legitimate one-off names, so it emits INFO. The AUTHORITATIVE branch above
-            # stays WARNING, so the MSAG tool (which loads DOMAINSTREETNAMES) still surfaces
+            # stays WARNING, so a run with --msag (which loads a name list) still surfaces
             # real 'name not in master list' findings. (This replaces the blanket
             # [severity] STREET-11 = INFO, which had muted the authoritative branch too.)
             out.append(ErrorRecord("STREET-11", "Invalid road name", FAMILY.STREET,
@@ -438,7 +466,11 @@ def check_street_11(addresses, streets, ctx):
 
 
 @registry.check(id="STREET-13", family=FAMILY.STREET, severity=SEVERITY.WARNING,
-                priority="v2", target="street")
+                priority="v2", target="street",
+                emits=(SEVERITY.WARNING,), summary="Flag an ESN or ZIP change between two range-adjacent segments of one street side.",
+                fields=("FROMLEFT", "FROMRIGHT", "LCITY", "LEFTZIP", "LESN", "NAME", "PREFIX",
+                        "RCITY", "RCL_NGUID", "RESN", "RIGHTZIP",
+                        "SEGMENT_ID", "SUFFIX", "TOLEFT", "TORIGHT", "TYPE",), requires=())
 def check_street_13(addresses, streets, ctx):
     """Boundary-QA surrogate: ESN/ZIP changes between range-adjacent same-side
     segments of the same street name (manual review; may be a true boundary)."""
@@ -477,12 +509,12 @@ def check_street_13(addresses, streets, ctx):
             # where the two segments are in provably different communities is an expected
             # boundary, not a mid-street defect. A same-community (or unknown-community)
             # change on one continuous road is the real defect this check exists to find,
-            # so it is always kept. (Do NOT gate on segment-centroid distance — _XY is a
+            # so it is always kept. (Do NOT gate on segment-centroid distance - _XY is a
             # per-segment centroid, so abutting segments of one long road sit far apart and
             # would be wrongly suppressed, hiding real boundaries.)
             if _confirmed_different_community(ps, s):
                 continue
-            side = key[1]   # 'L' or 'R' — label so left/right findings are distinct
+            side = key[1]   # 'L' or 'R' - label so left/right findings are distinct
             if esn_eq(ps.get(pesnf), s.get(esnf)) is False:
                 out.append(ErrorRecord("STREET-13", "Adjacent ESN/ZIP inconsistent", FAMILY.STREET,
                                        SEVERITY.WARNING, "street", s["_OID"], s.get("RCL_NGUID", "") or "",
@@ -497,7 +529,13 @@ def check_street_13(addresses, streets, ctx):
 
 
 @registry.check(id="STREET-10", family=FAMILY.STREET, severity=SEVERITY.ERROR,
-                priority="v1", target="street")
+                priority="v1", target="street",
+                emits=(SEVERITY.ERROR,), summary="Flag a street segment that has an empty required field.",
+                fields=("County_L", "County_R", "DiscrpAgID", "FROMLEFT", "FROMRIGHT",
+                        "IncMuni_L", "IncMuni_R", "LESN", "NAME", "ONEWAY",
+                        "Parity_L", "Parity_R", "RCL_NGUID", "RESN",
+                        "SEGMENT_ID", "St_Name", "State_L", "State_R",
+                        "TOLEFT", "TORIGHT",), requires=())
 def check_street_10(addresses, streets, ctx):
     out = []
     for s in streets:

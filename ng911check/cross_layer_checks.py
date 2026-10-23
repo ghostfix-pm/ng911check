@@ -1,19 +1,12 @@
-"""cross_layer checks. See spec docs/superpowers/specs/2026-06-02-911-validation-toolbox-design.md."""
+"""cross_layer checks: address points against street centerlines, and the optional MSAG."""
 from .model import ErrorRecord, SEVERITY, FAMILY
-from .common import (normalize, get_parity, esn_eq, nguid_partition,
-                     p_distance, addr_name_key, street_name_key, _clean,
-                     is_addressable, seg_label)
+from .common import normalize, esn_eq, _clean, is_addressable, seg_label
 from . import registry
 from . import msag
 import re
 
 _FQDN_RE = re.compile(
     r"^(?=.{1,253}$)([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,}$")
-
-
-def arcpy_point(xy):
-    import arcpy
-    return arcpy.PointGeometry(arcpy.Point(xy[0], xy[1]))
 
 
 def _covering_side(hno, s):
@@ -40,11 +33,11 @@ def _covering_side(hno, s):
 
 
 def _candidate_segments(a, ctx):
-    """Same-name segments for address a, keyed by BOTH its COMPARE-derived _NAMEKEY
+    """Same-name segments for address a, keyed by BOTH its supplied _NAMEKEY
     and its raw component name (PREFIX/STREET_NA/TYPE/SUFFIX), de-duped by SEGMENT_ID.
 
-    Mirrors engine.build_context's street raw_key index: when an address's COMPARE
-    is stale its _NAMEKEY points at the wrong name, so the raw component key recovers
+    Mirrors engine.build_context's street raw_key index: when a caller built an address's
+    _NAMEKEY some other way and it points at the wrong name, the raw component key recovers
     the segment that truly carries the address's name. Only ever ADDS candidates.
     """
     keys = [a["_NAMEKEY"]]
@@ -112,7 +105,12 @@ def _range_only_segments(a, ctx):
 
 
 @registry.check(id="XLAYER-01", family=FAMILY.CROSS, severity=SEVERITY.ERROR,
-                priority="v1-core", target="both")
+                priority="v1-core", target="both",
+                emits=(SEVERITY.ERROR,), summary="Flag an address ESN that differs from the ESN of the street side that covers it.",
+                fields=("Add_Number", "ESN", "FROMLEFT", "FROMRIGHT", "LESN", "PREFIX",
+                        "Parity_L", "Parity_R", "RESN", "SEGMENT_ID",
+                        "STREET_NA", "SUFFIX", "Site_NGUID", "TOLEFT",
+                        "TORIGHT", "TYPE",), requires=())
 def check_xlayer_01(addresses, streets, ctx):
     out = []
     for a in addresses:
@@ -153,16 +151,20 @@ def check_xlayer_01(addresses, streets, ctx):
 
 
 @registry.check(id="XLAYER-02", family=FAMILY.CROSS, severity=SEVERITY.ERROR,
-                priority="v1-core", target="both")
+                priority="v1-core", target="both",
+                emits=(SEVERITY.ERROR,), summary="Flag an address number that lies outside every range of its street.",
+                fields=("Add_Number", "FROMLEFT", "FROMRIGHT", "PREFIX", "Parity_L",
+                        "Parity_R", "SEGMENT_ID", "STREET_NA", "SUFFIX",
+                        "Site_NGUID", "TOLEFT", "TORIGHT", "TYPE",), requires=())
 def check_xlayer_02(addresses, streets, ctx):
     out = []
     for a in addresses:
         if not is_addressable(a):
             continue
-        # Consider BOTH the COMPARE-derived _NAMEKEY and the raw components: skip only
-        # when EVERY candidate name is blank or ignored. A stale COMPARE naming an
+        # Consider BOTH the supplied _NAMEKEY and the raw components: skip only
+        # when EVERY candidate name is blank or ignored. A stale _NAMEKEY naming an
         # ignored street must not suppress a real range-coverage failure on the
-        # address's actual street (and an address whose name lives only in COMPARE
+        # address's actual street (and an address whose name lives only in _NAMEKEY
         # must still be checked). Matches the dual-key lookup in _covering_segments.
         akey = normalize(a.get("PREFIX"), a.get("STREET_NA"), a.get("TYPE"), a.get("SUFFIX"))
         names = [n for n in (a["_NAMEKEY"], akey) if n]
@@ -173,7 +175,7 @@ def check_xlayer_02(addresses, streets, ctx):
         # (it fires when the address's true component name `akey` is not in any
         # centerline). Defer exactly that case so the same address is not reported under
         # both checks -- a "not within any range" message is meaningless when the road
-        # name does not exist. (akey blank = COMPARE-only address; XLAYER-04 skips those,
+        # name does not exist. (akey blank = _NAMEKEY-only address; XLAYER-04 skips those,
         # so XLAYER-02 still checks them via _NAMEKEY -- no overlap either way.)
         if akey and akey not in ctx.streets_by_name:
             continue
@@ -195,7 +197,11 @@ def check_xlayer_02(addresses, streets, ctx):
 
 
 @registry.check(id="XLAYER-12", family=FAMILY.CROSS, severity=SEVERITY.ERROR,
-                priority="v1-core", target="both")
+                priority="v1-core", target="both",
+                emits=(SEVERITY.ERROR,), summary="Flag an address that two segments of one street both cover.",
+                fields=("Add_Number", "FROMLEFT", "FROMRIGHT", "NAME", "PREFIX", "Parity_L",
+                        "Parity_R", "SEGMENT_ID", "STREET_NA", "SUFFIX",
+                        "Site_NGUID", "TOLEFT", "TORIGHT", "TYPE",), requires=())
 def check_xlayer_12(addresses, streets, ctx):
     out = []
     for a in addresses:
@@ -204,8 +210,8 @@ def check_xlayer_12(addresses, streets, ctx):
         covering = _covering_segments(a, ctx)
         # A genuine tie means two distinct segments of the SAME street cover the
         # address. Group covering segments by their intrinsic name (PREFIX+NAME+
-        # TYPE+SUFFIX) rather than counting across the COMPARE-keyed set: a stale
-        # COMPARE lands physically-distinct roads in one bucket, producing false
+        # TYPE+SUFFIX) rather than counting across the _NAMEKEY-keyed set: a stale
+        # _NAMEKEY lands physically-distinct roads in one bucket, producing false
         # ties between segments that are actually different streets.
         by_name = {}
         for s, _ in covering:
@@ -227,7 +233,11 @@ def check_xlayer_12(addresses, streets, ctx):
 
 
 @registry.check(id="XLAYER-03", family=FAMILY.CROSS, severity=SEVERITY.WARNING,
-                priority="v1-core", target="address")
+                priority="v1-core", target="address",
+                emits=(SEVERITY.WARNING,), summary="Flag an address whose odd or even number contradicts the declared parity of its covering side.",
+                fields=("Add_Number", "FROMLEFT", "FROMRIGHT", "PREFIX", "Parity_L",
+                        "Parity_R", "SEGMENT_ID", "STREET_NA", "SUFFIX", "Site_NGUID",
+                        "TOLEFT", "TORIGHT", "TYPE",), requires=())
 def check_xlayer_03(addresses, streets, ctx):
     out = []
     for a in addresses:
@@ -258,7 +268,11 @@ def check_xlayer_03(addresses, streets, ctx):
 
 
 @registry.check(id="XLAYER-13", family=FAMILY.CROSS, severity=SEVERITY.WARNING,
-                priority="v1", target="address")
+                priority="v1", target="address",
+                emits=(SEVERITY.WARNING,), summary="Flag an address on the opposite side of the centerline from the side its number implies.",
+                fields=("Add_Number", "FROMLEFT", "FROMRIGHT", "PREFIX", "Parity_L",
+                        "Parity_R", "SEGMENT_ID", "STREET_NA", "SUFFIX",
+                        "Site_NGUID", "TOLEFT", "TORIGHT", "TYPE",), requires=("geometry",))
 def check_xlayer_13(addresses, streets, ctx):
     """Geometric side (from geom) disagrees with parity-implied side. Needs geometry."""
     if ctx.geom_provider is None:
@@ -268,7 +282,6 @@ def check_xlayer_13(addresses, streets, ctx):
         covering = _covering_segments(a, ctx)
         if not covering or a.get("_XY") is None:
             continue
-        pt = arcpy_point(a["_XY"])
         # Pick the NEAREST covering segment whose perpendicular foot is INTERIOR.
         # A foot at a segment endpoint gives an undefined left/right side (the point
         # is off the end, not beside the line), which produced spurious wrong-side
@@ -279,8 +292,7 @@ def check_xlayer_13(addresses, streets, ctx):
             seg_geom = ctx.geom("street", s["_OID"])
             if seg_geom is None:
                 continue
-            res = seg_geom.queryPointAndDistance(pt)
-            along, dist, right = res[1], res[2], res[3]
+            along, dist, right = seg_geom.query(*a["_XY"])
             if along <= 0.5 or along >= seg_geom.length - 0.5:
                 continue  # foot at an endpoint -> side undefined
             if best is None or dist < best[0]:
@@ -300,7 +312,11 @@ def check_xlayer_13(addresses, streets, ctx):
 
 
 @registry.check(id="XLAYER-05", family=FAMILY.CROSS, severity=SEVERITY.WARNING,
-                priority="v1", target="address", default_on=False)
+                priority="v1", target="address", default_on=False,
+                emits=(SEVERITY.WARNING, SEVERITY.INFO,), summary="Flag an address far from the nearest centerline that carries its street name.",
+                fields=("Add_Number", "FROMLEFT", "FROMRIGHT", "PREFIX", "SEGMENT_ID",
+                        "STREET_NA", "SUFFIX", "Site_NGUID", "TOLEFT",
+                        "TORIGHT", "TYPE",), requires=("geometry",))
 def check_xlayer_05(addresses, streets, ctx):
     """Address within distance of nearest same-name centerline segment."""
     if ctx.geom_provider is None:
@@ -315,13 +331,12 @@ def check_xlayer_05(addresses, streets, ctx):
         candidates = ctx.streets_by_name.get(a["_NAMEKEY"], ())
         if not candidates:
             continue  # no same-name segment -> XLAYER-02's job
-        pt = arcpy_point(a["_XY"])
         dists = []
         for s in candidates:
             seg_geom = ctx.geom("street", s["_OID"])
             if seg_geom is None:
                 continue
-            dists.append(seg_geom.distanceTo(pt))
+            dists.append(seg_geom.distance_to(*a["_XY"]))
         if not dists:
             continue
         d = min(dists)
@@ -352,9 +367,9 @@ _INTERSTATE_RE = re.compile(r"^I-?(\d+)$")   # I75 / I-75 -> INTERSTATE 75
 
 # A leading "ST" in the legacy name is expanded to SAINT only in front of one of these.
 # "ST" is overwhelmingly the STREET type abbreviation, so a blanket ST->SAINT rule would
-# wreck every ordinary road; this is the closed set of local road names where the county
-# confirmed the ST means Saint (St_Name spells them "Saint Augustine" etc.). Add a name here
-# if a new Saint road is created -- nothing infers it from the data.
+# wreck every ordinary road; this is a closed list of names where ST is known to mean Saint
+# (St_Name spells them "Saint Augustine" etc.). Add a name here for a new Saint road --
+# nothing infers it from the data.
 _SAINT_NAMES = frozenset({"AUGUSTINE", "BENEDICT", "GEORGE", "LAWRENCE", "PATRICK", "PETER"})
 
 
@@ -379,7 +394,7 @@ def _name_matches_stname(legacy, stname, pretyp):
     """True if the legacy combined name agrees with the NENA St_Name. Exact match; or the
     legacy name's directional/interstate abbreviations expand to St_Name ('NB I75' ==
     'Northbound Interstate 75'); or (when a route pre-type is present) St_Name is the
-    trailing token-run of the legacy name -- so 'HWY 318' / St_Name '318' / St_PreTyp
+    trailing token-run of the legacy name -- so 'HWY 99' / St_Name '99' / St_PreTyp
     'Highway' agrees."""
     nl, ns = normalize(legacy), normalize(stname)
     if nl == ns:
@@ -396,7 +411,10 @@ def _name_matches_stname(legacy, stname, pretyp):
 
 
 @registry.check(id="XLAYER-10", family=FAMILY.CROSS, severity=SEVERITY.WARNING,
-                priority="v1", target="both")
+                priority="v1", target="both",
+                emits=(SEVERITY.WARNING,), summary="Flag a PREFIX, TYPE or street name that disagrees with its St_ field.",
+                fields=("NAME", "PREFIX", "RCL_NGUID", "STREET_NA", "Site_NGUID", "St_Name",
+                        "St_PosTyp", "St_PreDir", "St_PreTyp", "TYPE",), requires=())
 def check_xlayer_10(addresses, streets, ctx):
     """Abbrev PREFIX/TYPE must cross-walk to full-name St_PreDir/St_PosTyp."""
     cw = ctx.crosswalks
@@ -404,9 +422,6 @@ def check_xlayer_10(addresses, streets, ctx):
 
     def _blank(v):
         return (v or "").strip() == ""
-
-    def _up(v):
-        return (v or "").strip().upper()
 
     def _check(rows, name_fld, layer, nguid_fld):
         for r in rows:
@@ -452,8 +467,8 @@ def check_xlayer_10(addresses, streets, ctx):
                         SEVERITY.WARNING, layer, oid, nguid,
                         "TYPE %r != St_PosTyp %r" % (typ, tfull), xy))
             # name <-> St_Name. The legacy combined name embeds a route pre-type
-            # ("HWY 318", "NFR 38") that NENA splits into St_PreTyp ("Highway") +
-            # St_Name ("318"). So accept when St_Name's tokens are the TRAILING tokens
+            # ("HWY 99", "FR 12") that NENA splits into St_PreTyp ("Highway") +
+            # St_Name ("99"). So accept when St_Name's tokens are the TRAILING tokens
             # of the legacy name (i.e. legacy = <pre-type> + St_Name); flag otherwise.
             if not _name_matches_stname(r.get(name_fld), r.get("St_Name"), r.get("St_PreTyp")):
                 out.append(ErrorRecord(
@@ -467,7 +482,13 @@ def check_xlayer_10(addresses, streets, ctx):
 
 
 @registry.check(id="XLAYER-06", family=FAMILY.CROSS, severity=SEVERITY.WARNING,
-                priority="v1", target="address", default_on=False)
+                priority="v1", target="address", default_on=False,
+                emits=(SEVERITY.WARNING,), summary="Flag an address city or ZIP that differs from the covering street side.",
+                fields=("Add_Number", "CITY", "FROMLEFT", "FROMRIGHT", "LCITY", "LEFTZIP",
+                        "NAME", "PREFIX", "Parity_L", "Parity_R", "RCITY",
+                        "RIGHTZIP", "SEGMENT_ID", "STREET_NA", "SUFFIX",
+                        "Site_NGUID", "TOLEFT", "TORIGHT", "TYPE",
+                                        "ZIP_CODE",), requires=())
 def check_xlayer_06(addresses, streets, ctx):
     """Address city/ZIP must match the covering segment side's city/ZIP."""
     out = []
@@ -478,7 +499,7 @@ def check_xlayer_06(addresses, streets, ctx):
         if not covering:
             continue
         # Compare only against a segment that truly carries the address's name.
-        # _candidate_segments can surface a same-COMPARE segment of a different
+        # _candidate_segments can surface a same-_NAMEKEY segment of a different
         # real street; its city/ZIP must not be asserted against this address.
         addr_comp = normalize(a.get("PREFIX"), a.get("STREET_NA"),
                               a.get("TYPE"), a.get("SUFFIX"))
@@ -520,16 +541,18 @@ def check_xlayer_06(addresses, streets, ctx):
 
 
 @registry.check(id="XLAYER-04", family=FAMILY.CROSS, severity=SEVERITY.ERROR,
-                priority="v1-core", target="both")
+                priority="v1-core", target="both",
+                emits=(SEVERITY.ERROR,), summary="Flag an address whose street name no centerline carries.",
+                fields=("Add_Number", "PREFIX", "STREET_NA", "SUFFIX", "Site_NGUID", "TYPE",), requires=())
 def check_xlayer_04(addresses, streets, ctx):
     out = []
     for a in addresses:
         if not is_addressable(a):
             continue
         # Key name-presence on the address's TRUE components, not the
-        # COMPARE-derived _NAMEKEY: a stale COMPARE can name a road that does not
+        # supplied _NAMEKEY: a stale _NAMEKEY can name a road that does not
         # carry this address while masking the absence of its real street name.
-        # (Same stale-COMPARE calibration as engine.build_context's raw_key index.)
+        # (Same defence as engine.build_context's raw_key index.)
         akey = normalize(a.get("PREFIX"), a.get("STREET_NA"), a.get("TYPE"), a.get("SUFFIX"))
         if not akey or ctx.name_ignored(akey):
             continue
@@ -547,7 +570,10 @@ def check_xlayer_04(addresses, streets, ctx):
 
 
 @registry.check(id="XLAYER-04b", family=FAMILY.CROSS, severity=SEVERITY.WARNING,
-                priority="v1", target="both")
+                priority="v1", target="both",
+                emits=(SEVERITY.WARNING, SEVERITY.INFO,), summary="Flag a stored COMPARE value that differs from the name rebuilt from its parts.",
+                fields=("Add_Number", "COMPARE", "NAME", "PREFIX", "RCL_NGUID", "STREET_NA",
+                        "SUFFIX", "Site_NGUID", "TYPE",), requires=())
 def check_xlayer_04b(addresses, streets, ctx):
     """COMPARE integrity: stored COMPARE should equal recomputed (pre-normalization)."""
     out = []
@@ -560,7 +586,7 @@ def check_xlayer_04b(addresses, streets, ctx):
             continue
         want = normalize(a.get("PREFIX"), a.get("STREET_NA"), a.get("TYPE"), a.get("SUFFIX"))
         if _clean(a.get("COMPARE")) == "":
-            addr_blank += 1   # cache simply not populated — uniform, summarized below
+            addr_blank += 1   # cache simply not populated - uniform, summarized below
             continue
         if normalize(a.get("COMPARE")) != want:
             out.append(ErrorRecord("XLAYER-04b", "Address COMPARE inconsistent", FAMILY.CROSS,
@@ -602,7 +628,9 @@ from collections import Counter
 
 
 @registry.check(id="XLAYER-07", family=FAMILY.CROSS, severity=SEVERITY.ERROR,
-                priority="v1-core", target="both")
+                priority="v1-core", target="both",
+                emits=(SEVERITY.ERROR,), summary="Flag an NGUID that appears on more than one row of a layer.",
+                fields=("RCL_NGUID", "Site_NGUID",), requires=())
 def check_xlayer_07(addresses, streets, ctx):
     out = []
     for rows, fld, layer in ((addresses, "Site_NGUID", "address"), (streets, "RCL_NGUID", "street")):
@@ -618,7 +646,9 @@ def check_xlayer_07(addresses, streets, ctx):
 
 
 @registry.check(id="XLAYER-08", family=FAMILY.CROSS, severity=SEVERITY.ERROR,
-                priority="v1", target="both")
+                priority="v1", target="both",
+                emits=(SEVERITY.ERROR, SEVERITY.WARNING,), summary="Flag a blank DiscrpAgID, or one that is not the expected agency.",
+                fields=("DiscrpAgID", "RCL_NGUID", "Site_NGUID",), requires=())
 def check_xlayer_08(addresses, streets, ctx):
     out = []
     fqdn_failed = False
@@ -658,10 +688,19 @@ def check_xlayer_08(addresses, streets, ctx):
 
 
 @registry.check(id="XLAYER-09", family=FAMILY.CROSS, severity=SEVERITY.WARNING,
-                priority="v1", target="both")
+                priority="v1", target="both",
+                emits=(SEVERITY.ERROR, SEVERITY.WARNING, SEVERITY.INFO,), summary="Flag a state, country or county that is blank, invalid or outside the configured set.",
+                fields=("COUNTY", "Country", "County_L", "County_R", "RCL_NGUID", "STATE",
+                        "Site_NGUID", "State_L", "State_R",), requires=())
 def check_xlayer_09(addresses, streets, ctx):
-    """State/country/county validity for addresses and street sides."""
+    """State/country/county validity for addresses and street sides.
+
+    A STATE that is not a USPS code is always an ERROR. "Not the expected state" and "county
+    not in the set" run only when the settings name an expected_state or a list of counties:
+    nothing here assumes a state."""
     cw = ctx.crosswalks
+    expected = ctx.expected_state
+    counties = {cw.county_canonical(c) for c in ctx.counties}
     out = []
 
     def _v(val):
@@ -674,10 +713,10 @@ def check_xlayer_09(addresses, streets, ctx):
             out.append(ErrorRecord("XLAYER-09", "Address STATE not a valid USPS code",
                                    FAMILY.CROSS, SEVERITY.ERROR, "address", oid, nguid,
                                    "STATE %r invalid" % a.get("STATE"), xy))
-        elif state and state != "FL":
-            out.append(ErrorRecord("XLAYER-09", "Address STATE not FL", FAMILY.CROSS,
-                                   SEVERITY.WARNING, "address", oid, nguid,
-                                   "STATE %r != FL" % a.get("STATE"), xy))
+        elif state and expected and state != expected:
+            out.append(ErrorRecord("XLAYER-09", "Address STATE not the expected state",
+                                   FAMILY.CROSS, SEVERITY.WARNING, "address", oid, nguid,
+                                   "STATE %r != %s" % (a.get("STATE"), expected), xy))
         country = _v(a.get("Country"))
         if not country:
             out.append(ErrorRecord("XLAYER-09", "Address Country blank", FAMILY.CROSS,
@@ -692,10 +731,10 @@ def check_xlayer_09(addresses, streets, ctx):
             out.append(ErrorRecord("XLAYER-09", "Address COUNTY blank", FAMILY.CROSS,
                                    SEVERITY.ERROR, "address", oid, nguid,
                                    "COUNTY blank", xy))
-        elif cw.county_canonical(a.get("COUNTY")) not in cw.fl_counties:
-            out.append(ErrorRecord("XLAYER-09", "Address COUNTY not in FL set", FAMILY.CROSS,
-                                   SEVERITY.WARNING, "address", oid, nguid,
-                                   "COUNTY %r not in FL set" % a.get("COUNTY"), xy))
+        elif counties and cw.county_canonical(a.get("COUNTY")) not in counties:
+            out.append(ErrorRecord("XLAYER-09", "Address COUNTY not in the configured set",
+                                   FAMILY.CROSS, SEVERITY.WARNING, "address", oid, nguid,
+                                   "COUNTY %r not in the configured set" % a.get("COUNTY"), xy))
 
     for s in streets:
         oid, nguid, xy = s["_OID"], s.get("RCL_NGUID", "") or "", s.get("_XY")
@@ -705,20 +744,21 @@ def check_xlayer_09(addresses, streets, ctx):
                 out.append(ErrorRecord("XLAYER-09", "Street %s not a valid USPS code" % fld,
                                        FAMILY.CROSS, SEVERITY.ERROR, "street", oid, nguid,
                                        "%s %r invalid" % (fld, s.get(fld)), xy))
-            elif state and state != "FL":
-                out.append(ErrorRecord("XLAYER-09", "Street %s not FL" % fld, FAMILY.CROSS,
-                                       SEVERITY.WARNING, "street", oid, nguid,
-                                       "%s %r != FL" % (fld, s.get(fld)), xy))
+            elif state and expected and state != expected:
+                out.append(ErrorRecord("XLAYER-09", "Street %s not the expected state" % fld,
+                                       FAMILY.CROSS, SEVERITY.WARNING, "street", oid, nguid,
+                                       "%s %r != %s" % (fld, s.get(fld), expected), xy))
         for fld in ("County_L", "County_R"):
             county = _v(s.get(fld))
             if not county:
                 out.append(ErrorRecord("XLAYER-09", "Street %s blank" % fld, FAMILY.CROSS,
                                        SEVERITY.ERROR, "street", oid, nguid,
                                        "%s blank" % fld, xy))
-            elif cw.county_canonical(s.get(fld)) not in cw.fl_counties:
-                out.append(ErrorRecord("XLAYER-09", "Street %s not in FL set" % fld, FAMILY.CROSS,
-                                       SEVERITY.WARNING, "street", oid, nguid,
-                                       "%s %r not in FL set" % (fld, s.get(fld)), xy))
+            elif counties and cw.county_canonical(s.get(fld)) not in counties:
+                out.append(ErrorRecord("XLAYER-09", "Street %s not in the configured set" % fld,
+                                       FAMILY.CROSS, SEVERITY.WARNING, "street", oid, nguid,
+                                       "%s %r not in the configured set" % (fld, s.get(fld)),
+                                       xy))
         cl, cr = cw.county_canonical(s.get("County_L")), cw.county_canonical(s.get("County_R"))
         if cl and cr and cl != cr:   # a blank side is already an ERROR above; don't double-fire
             out.append(ErrorRecord("XLAYER-09", "Street County_L != County_R", FAMILY.CROSS,
@@ -741,7 +781,11 @@ def _side_ranges(s):
 
 
 @registry.check(id="XLAYER-14", family=FAMILY.CROSS, severity=SEVERITY.INFO,
-                priority="v1", target="street")
+                priority="v1", target="street",
+                emits=(SEVERITY.INFO,), summary="Report a street segment that has an address range but no address point inside it.",
+                fields=("Add_Number", "FROMLEFT", "FROMRIGHT", "NAME", "PREFIX", "Parity_L",
+                        "Parity_R", "RCL_NGUID", "SEGMENT_ID", "SUFFIX",
+                        "TOLEFT", "TORIGHT", "TYPE",), requires=())
 def check_xlayer_14(addresses, streets, ctx):
     """Addressable side range with no covering active address points."""
     out = []
@@ -749,8 +793,8 @@ def check_xlayer_14(addresses, streets, ctx):
         ranges = list(_side_ranges(s))
         if not ranges:
             continue
-        # Look up covering addresses under BOTH the segment's COMPARE-derived
-        # _NAMEKEY and its true component name: a stale COMPARE otherwise hides the
+        # Look up covering addresses under BOTH the segment's supplied
+        # _NAMEKEY and its true component name: a stale _NAMEKEY otherwise hides the
         # address points that actually carry the segment's name. Widening candidates
         # can only reveal real coverage, never mask a true coverage gap.
         raw = normalize(s.get("PREFIX"), s.get("NAME"), s.get("TYPE"), s.get("SUFFIX"))
@@ -787,7 +831,12 @@ def check_xlayer_14(addresses, streets, ctx):
 
 
 @registry.check(id="XLAYER-11", family=FAMILY.CROSS, severity=SEVERITY.INFO,
-                priority="v1", target="both", default_on=False)
+                priority="v1", target="both", default_on=False,
+                emits=(SEVERITY.INFO, SEVERITY.WARNING,), summary="Report the share of address points that pass the ESN, range, parity and name checks.",
+                fields=("Add_Number", "ESN", "FROMLEFT", "FROMRIGHT", "LESN", "PREFIX",
+                        "Parity_L", "Parity_R", "RESN", "SEGMENT_ID",
+                        "STREET_NA", "SUFFIX", "Site_NGUID", "TOLEFT",
+                        "TORIGHT", "TYPE",), requires=())
 def check_xlayer_11(addresses, streets, ctx):
     """ALI/MSAG-to-GIS sync metric: % of addressable addresses fully reconciling."""
     active = [a for a in addresses if is_addressable(a)]
@@ -814,9 +863,11 @@ def check_xlayer_11(addresses, streets, ctx):
 
 
 @registry.check(id="XLAYER-15", family=FAMILY.CROSS, severity=SEVERITY.WARNING,
-                priority="v1", target="both")
+                priority="v1", target="both",
+                emits=(SEVERITY.WARNING,), summary="Flag a modifier or separator value that is not in the supplied domain.",
+                fields=("RCL_NGUID", "Site_NGUID", "St_PosMod", "St_PreMod", "St_PreSep",), requires=("modifier_domains",))
 def check_xlayer_15(addresses, streets, ctx):
-    """NENA modifier/separator domain conformance (MapSAG parity): populated
+    """NENA modifier/separator domain conformance (NENA domains): populated
     St_PreMod / St_PosMod / St_PreSep must be valid domain values. Blank skipped."""
     cw = ctx.crosswalks
     checks = (("St_PreMod", cw.valid_premod, "pre-modifier"),
@@ -845,22 +896,26 @@ def _msag_rec_label(rec):
 
 
 @registry.check(id="XLAYER-16", family=FAMILY.CROSS, severity=SEVERITY.WARNING,
-                priority="v2", target="both", default_on=False)
+                priority="v2", target="both", default_on=False,
+                emits=(SEVERITY.WARNING, SEVERITY.ERROR, SEVERITY.INFO,), summary="Compare the MSAG with the GIS ranges and report coverage, exact-tuple rate, differences and file age.",
+                fields=(), requires=("msag",))
 def check_xlayer_16(addresses, streets, ctx):
     """MSAG <-> GIS reconciliation (NENA 71-501, opt-in).
 
-    No-ops unless an MSAG source has been loaded onto the context
+    Skipped, with a notice, unless an MSAG source has been loaded onto the context
     (engine.build_msag_context). Emits one ERROR per GIS range with no MSAG
     coverage, one WARNING per MSAG record with no GIS coverage (after
-    exceptions), one WARNING per ESN attribute mismatch, one WARNING per RANGE mismatch (same road in
-    both sources, different low/high), and one INFO summary
-    carrying the match-rate KPI vs the NENA floor.
+    exceptions), one WARNING per ESN attribute mismatch, one WARNING per RANGE mismatch (same
+    road in both sources, different low/high), and INFO summaries carrying the coverage match
+    rate against the NENA floor, the stricter exact-tuple rate and the age of the MSAG file.
+    Three more WARNINGS refuse to let a rate stand alone: no eligible record at all, a record
+    that fell in no bucket, and a file older than the configured limit.
     """
-    if ctx.msag_records is None:
-        return []
     res = msag.reconcile(ctx.msag_records, ctx.gis_msag or [], ctx.msag_exceptions,
-                         addr_index=getattr(ctx, "msag_addr_index", None))
+                         addr_index=ctx.msag_addr_index)
     ctx.msag_match_rate = res["match_rate"]
+    ctx.msag_result = res
+    counts = res["counts"]
     out = []
     for g in res["gis_not_msag"]:
         # Attribute/locate to the originating centerline so the finding is mappable.
@@ -875,26 +930,23 @@ def check_xlayer_16(addresses, streets, ctx):
             "street", 0, "",
             "MSAG record has no GIS coverage: %s" % _msag_rec_label(m),
             None))
-    for rm in res.get("range_mismatch", []):
-        # Report it the way MapSAG does: the same road stated once per source, so the analyst
-        # sees WHICH endpoint moved without cross-referencing two other buckets.
-        # ONE finding per MSAG record, against the AGGREGATE GIS extent -- Example splits a
-        # road into many short centerline segments, so emitting one finding per overlapping
-        # segment turned 72 real disagreements into 800 lines that all restated the same MSAG
-        # range. The span plus the segment count is the actionable form.
+    for rm in res["range_mismatch"]:
+        # The same road stated once per source, so the analyst sees WHICH endpoint moved
+        # without cross-referencing two other buckets. ONE finding per MSAG record, against
+        # the AGGREGATE GIS extent: a road is often many short centerline segments, so one
+        # finding per overlapping segment would restate the same MSAG range many times over.
+        # The span plus the segment count is the actionable form.
         m = rm["msag"]
-        lows = [g.get("low") for g in rm["gis"] if g.get("low") is not None]
-        highs = [g.get("high") for g in rm["gis"] if g.get("high") is not None]
+        g_lo = min(g["low"] for g in rm["gis"])
+        g_hi = max(g["high"] for g in rm["gis"])
         anchor = rm["gis"][0]
-        g_lo = min(lows) if lows else None
-        g_hi = max(highs) if highs else None
-        gaps = msag.uncovered_for_record(m, rm.get("group") or rm["gis"])
+        gaps = msag.uncovered_for_record(m, rm["group"])
         gap_txt = ", ".join("%s-%s" % (a, b) if a != b else str(a) for a, b in gaps)
         if (g_lo, g_hi) != (m.get("low"), m.get("high")):
-            what = ("GIS %s-%s vs INHOUSE_MSAG %s-%s" % (g_lo, g_hi, m.get("low"), m.get("high")))
+            what = ("GIS %s-%s vs MSAG %s-%s" % (g_lo, g_hi, m.get("low"), m.get("high")))
         else:
             # Endpoints agree; the disagreement is a hole inside the span.
-            what = ("GIS and INHOUSE_MSAG both %s-%s, but GIS coverage has gaps"
+            what = ("GIS and MSAG both %s-%s, but GIS coverage has gaps"
                     % (m.get("low"), m.get("high")))
         out.append(ErrorRecord(
             "XLAYER-16", "MSAG/GIS range mismatch", FAMILY.CROSS, SEVERITY.WARNING,
@@ -917,10 +969,40 @@ def check_xlayer_16(addresses, streets, ctx):
         "street", 0, "",
         "MSAG match rate %.2f%% (matched %d/%d eligible); NENA floor %.2f%% -> %s "
         "[unmatched: %d range mismatch, %d not in GIS, %d gap-with-no-address]" % (
-            rate * 100.0, res["counts"]["matched"],
-            res["counts"]["msag_total"] - res["counts"]["excepted"],
+            rate * 100.0, counts["matched"], counts["eligible"],
             floor * 100.0, "OK" if rate >= floor else "BELOW FLOOR",
-            res["counts"].get("range_mismatch", 0), res["counts"]["msag_not_gis"],
-            res["counts"].get("addr_gated", 0)),
+            counts["range_mismatch"], counts["msag_not_gis"], counts["addr_gated"]),
         None))
+    out.append(ErrorRecord(
+        "XLAYER-16", "MSAG exact-tuple KPI", FAMILY.CROSS, SEVERITY.INFO,
+        "street", 0, "",
+        "MSAG exact-tuple rate %.2f%% (%d/%d eligible equal one whole GIS run on community, "
+        "street, parity, extent and ESN); coverage match rate %.2f%%; %d of %d records "
+        "excepted" % (res["exact_rate"] * 100.0, counts["exact"], counts["eligible"],
+                      rate * 100.0, counts["excepted"], counts["msag_total"]),
+        None))
+    if counts["eligible"] == 0:
+        out.append(ErrorRecord(
+            "XLAYER-16", "MSAG match rate is vacuous", FAMILY.CROSS, SEVERITY.WARNING,
+            "street", 0, "",
+            "no MSAG record is eligible (%d read, %d excepted), so the 100%% rate above "
+            "compared nothing" % (counts["msag_total"], counts["excepted"]), None))
+    if counts["unaccounted"]:
+        out.append(ErrorRecord(
+            "XLAYER-16", "MSAG record lost between buckets", FAMILY.CROSS, SEVERITY.WARNING,
+            "street", 0, "",
+            "%d MSAG record(s) are in no bucket (matched, excepted, not in GIS, range "
+            "mismatch or address-gated), so no rate here can be trusted"
+            % counts["unaccounted"], None))
+    age = ctx.msag_source_age_days
+    if age is not None:
+        limit = ctx.max_source_age_days
+        stale = limit is not None and age > limit
+        out.append(ErrorRecord(
+            "XLAYER-16", "MSAG source older than the limit" if stale else "MSAG source age",
+            FAMILY.CROSS, SEVERITY.WARNING if stale else SEVERITY.INFO, "street", 0, "",
+            "MSAG source is %d day(s) old%s" % (
+                age, " (limit %d)" % limit if stale else
+                (" (limit %d)" % limit if limit is not None else " (no limit set)")),
+            None))
     return out

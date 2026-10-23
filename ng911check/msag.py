@@ -1,15 +1,27 @@
 """MSAG load + reconciliation engine.
 
-Treats the authoritative MSAG spreadsheet as READ-ONLY. The xlsx is parsed once
-into a normalized in-memory list of records; reconciliation against GIS-derived
-MSAG records follows NENA 71-501 (bidirectional, range-containment).
+Treats the authoritative MSAG file as READ-ONLY. The CSV is parsed once into a normalized
+in-memory list of records; reconciliation against GIS-derived MSAG records follows NENA 71-501
+(bidirectional, range-containment). On top of that coverage match this module reports three
+things the match rate alone hides:
 
-Pure Python + openpyxl only. The reconcile/build/normalize helpers operate on
-plain dicts so they are unit-testable without arcpy or the big xlsx.
+  exact-tuple rate  the share of MSAG records whose extent equals one whole GIS run for the
+                    same community, street, parity and ESN. Coverage can be met by a GIS run
+                    that is wider than the MSAG record; this rate cannot.
+  roll-up           the findings grouped by street, so one street's problems read as one row.
+  source age        how many days old the MSAG file is, because a stale file makes any
+                    match rate describe a world that no longer exists.
+
+Pure Python 3 standard library. The reconcile/build/normalize helpers operate on plain dicts
+so they are unit-testable without a spreadsheet or a geodatabase. Only the load_* functions
+touch a file.
 """
+import csv
 import hashlib
 import json
 import os
+import time
+from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from typing import Optional
 
@@ -18,10 +30,10 @@ from .common import normalize, is_addressable
 # Canonical MSAG field keys the engine reasons about.
 CANONICAL_FIELDS = ("prefix", "street_name", "type", "suffix",
                     "low", "high", "community", "parity", "esn")
-# Fields that MUST resolve to a real column for the sheet to be usable.
+# Fields that MUST resolve to a real column for the file to be usable.
 REQUIRED_FIELDS = ("street_name", "low", "high", "community", "parity", "esn")
 
-# Tokens used to auto-detect the real header row (DESIGN: row 3 in the live file).
+# Tokens used to auto-detect the real header row when a banner sits above it.
 HEADER_TOKENS = ("PREFIX", "STREET NAME", "TYPE", "SUFFIX",
                  "LOW", "HIGH", "COMMUNITY", "SIDE", "ESN")
 
@@ -37,17 +49,20 @@ DEFAULT_FIELD_MAP = {
     "esn": "ESN",
 }
 
+SECONDS_PER_DAY = 86400
+
 
 @dataclass
 class MsagConfig:
     source_path: str
-    sheet: str = "Cleaned_up_Msag"
-    header_row: int = 3                       # 1-based
+    header_row: int = 0                       # 1-based; 0 finds the header row by its tokens
     field_map: dict = field(default_factory=lambda: dict(DEFAULT_FIELD_MAP))
     esn_pad_width: int = 3
-    exceptions_gdb: Optional[str] = None
+    exceptions_path: Optional[str] = None     # CSV, see load_exceptions
+    names_path: Optional[str] = None          # CSV, see load_authoritative_names
     min_match_rate: float = 0.98
-    source_hash: Optional[str] = None
+    max_source_age_days: Optional[int] = None  # None reports the age and never warns on it
+    source_hash: Optional[str] = None         # when set, the source must hash to this
 
 
 def load_config(path):
@@ -58,16 +73,16 @@ def load_config(path):
     data["field_map"] = fm
     unknown = set(data) - set(MsagConfig.__dataclass_fields__)
     if unknown:
-        raise ValueError("Unknown MSAG config key(s): %s — check for typos"
+        raise ValueError("Unknown MSAG config key(s): %s - check for typos"
                          % ", ".join(sorted(unknown)))
     cfg = MsagConfig(**data)
-    # Resolve RELATIVE source/exceptions paths against the config file's own folder, so a
-    # bundled config (with paths relative to the package) is portable across machines.
+    # Resolve RELATIVE paths against the config file's own folder, so a config kept next to
+    # its data is portable across machines.
     base = os.path.dirname(os.path.abspath(path))
-    if cfg.source_path and not os.path.isabs(cfg.source_path):
-        cfg.source_path = os.path.normpath(os.path.join(base, cfg.source_path))
-    if cfg.exceptions_gdb and not os.path.isabs(cfg.exceptions_gdb):
-        cfg.exceptions_gdb = os.path.normpath(os.path.join(base, cfg.exceptions_gdb))
+    for attr in ("source_path", "exceptions_path", "names_path"):
+        value = getattr(cfg, attr)
+        if value and not os.path.isabs(value):
+            setattr(cfg, attr, os.path.normpath(os.path.join(base, value)))
     return cfg
 
 
@@ -77,12 +92,29 @@ def save_config(cfg, path):
 
 
 def file_hash(path):
-    """SHA-256 of a file's bytes; used to detect that the source xlsx changed."""
+    """SHA-256 of a file's bytes; used to detect that the source file changed."""
     h = hashlib.sha256()
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(65536), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def verify_source_hash(config):
+    """Refuse a source file that no longer hashes to the value the config was written for."""
+    if config.source_hash is None:
+        return
+    got = file_hash(config.source_path)
+    if got != config.source_hash:
+        raise ValueError("MSAG source %s changed: its SHA-256 is %s but the config pins %s. "
+                         "Review the file, then update source_hash."
+                         % (config.source_path, got[:12], config.source_hash[:12]))
+
+
+def source_age_days(path, now=None):
+    """Whole days since the file was last modified. `now` is a Unix time, for tests."""
+    now = time.time() if now is None else now
+    return max(0, int((now - os.path.getmtime(path)) // SECONDS_PER_DAY))
 
 
 # --- normalization helpers ---------------------------------------------------
@@ -91,7 +123,7 @@ def pad_esn(value, width=3):
     """Zero-pad an ESN to a fixed width for comparison. Non-numeric -> upper/trim.
     Blank -> ''. '6' and '006' compare equal at width 3."""
     if isinstance(value, float) and value.is_integer():
-        value = int(value)   # arcpy numeric ESN 13.0 -> '13', not '13.0'
+        value = int(value)   # a numeric ESN 13.0 -> '13', not '13.0'
     s = "" if value is None else str(value).strip()
     if s == "":
         return ""
@@ -133,16 +165,16 @@ def name_key(prefix, street_name, type_, suffix):
 
 # --- header detection / schema validation ------------------------------------
 
-def detect_header_row(ws, expected_tokens=HEADER_TOKENS, scan_rows=10):
+def detect_header_row(rows, expected_tokens=HEADER_TOKENS, scan_rows=10):
     """Return the 1-based row whose cells best match the core MSAG tokens.
 
-    Scans the first ~scan_rows rows; the row with the most token hits wins.
-    Ties resolve to the earliest row.
+    `rows` is a list of cell lists. Scans the first scan_rows rows; the row with the most
+    token hits wins. Ties resolve to the earliest row.
     """
     wanted = {normalize(t) for t in expected_tokens}
     best_row, best_score = 1, -1
-    for row_idx, row in enumerate(ws.iter_rows(min_row=1, max_row=scan_rows), start=1):
-        cells = {normalize(c.value) for c in row if c.value is not None}
+    for row_idx, row in enumerate(rows[:scan_rows], start=1):
+        cells = {normalize(c) for c in row}
         cells.discard("")
         score = len(wanted & cells)
         if score > best_score:
@@ -164,76 +196,75 @@ def validate_msag_schema(headers, field_map):
                           "field_map in the MSAG config." % canonical)
         elif actual not in present:
             errors.append("Required column for '%s' not found (expected header "
-                          "'%s'). Fix the column name in field_map or the sheet."
+                          "'%s'). Fix the column name in field_map or the file."
                           % (canonical, actual))
     return (not errors, errors)
 
 
-# --- xlsx loading ------------------------------------------------------------
+# --- CSV loading -------------------------------------------------------------
+
+def _read_rows(path):
+    with open(path, "r", encoding="utf-8-sig", newline="") as fh:
+        return [row for row in csv.reader(fh)]
+
 
 def _row_is_blank(values):
     return all(v is None or str(v).strip() == "" for v in values)
 
 
-def load_msag_xlsx(config):
-    """Parse the MSAG xlsx into normalized record dicts.
+def load_msag_csv(config):
+    """Parse the MSAG CSV into normalized record dicts.
 
     Returns a list of {community, name_key, prefix, street_name, type, suffix,
     low(int|None), high(int|None), parity('O'/'E'/'B'/''), esn(zero-padded str)}.
-    Skips fully-blank rows; tolerates banner/legend rows via header_row.
+    Skips fully-blank rows; tolerates banner rows above the header via header_row.
+    Refuses a file whose required columns are missing, or whose hash is not the pinned one.
     """
-    import openpyxl
-    wb = openpyxl.load_workbook(config.source_path, read_only=True, data_only=True)
-    try:
-        ws = wb[config.sheet]
-        header_idx = config.header_row
-        headers = []
-        for row in ws.iter_rows(min_row=header_idx, max_row=header_idx):
-            headers = [("" if c.value is None else str(c.value).strip()) for c in row]
-            break
-        col_of = {h: i for i, h in enumerate(headers) if h}
+    verify_source_hash(config)
+    rows = _read_rows(config.source_path)
+    header_idx = config.header_row or detect_header_row(rows)
+    if header_idx > len(rows):
+        raise ValueError("MSAG header_row %d is past the end of %s (%d rows)"
+                         % (header_idx, config.source_path, len(rows)))
+    headers = [str(c).strip() for c in rows[header_idx - 1]]
+    ok, errors = validate_msag_schema(headers, config.field_map)
+    if not ok:
+        raise ValueError("MSAG file %s: %s" % (config.source_path, " ".join(errors)))
+    col_of = {h: i for i, h in enumerate(headers) if h}
+    cols = {c: col_of.get(config.field_map.get(c)) for c in CANONICAL_FIELDS}
+    records = []
+    for values in rows[header_idx:]:
+        if _row_is_blank(values):
+            continue
 
-        def idx(canonical):
-            actual = config.field_map.get(canonical)
-            return col_of.get(actual)
+        def get(canonical):
+            i = cols[canonical]
+            return values[i] if (i is not None and i < len(values)) else None
 
-        cols = {c: idx(c) for c in CANONICAL_FIELDS}
-        records = []
-        for row in ws.iter_rows(min_row=header_idx + 1):
-            values = [c.value for c in row]
-            if _row_is_blank(values):
-                continue
-
-            def get(canonical):
-                i = cols[canonical]
-                return values[i] if (i is not None and i < len(values)) else None
-
-            prefix = "" if get("prefix") is None else str(get("prefix")).strip()
-            street = "" if get("street_name") is None else str(get("street_name")).strip()
-            type_ = "" if get("type") is None else str(get("type")).strip()
-            suffix = "" if get("suffix") is None else str(get("suffix")).strip()
-            records.append({
-                "community": "" if get("community") is None else str(get("community")).strip().upper(),
-                "name_key": name_key(prefix, street, type_, suffix),
-                "prefix": prefix,
-                "street_name": street,
-                "type": type_,
-                "suffix": suffix,
-                "low": _to_int(get("low")),
-                "high": _to_int(get("high")),
-                "parity": norm_parity(get("parity")),
-                "esn": pad_esn(get("esn"), config.esn_pad_width),
-            })
-        return records
-    finally:
-        wb.close()
+        prefix = "" if get("prefix") is None else str(get("prefix")).strip()
+        street = "" if get("street_name") is None else str(get("street_name")).strip()
+        type_ = "" if get("type") is None else str(get("type")).strip()
+        suffix = "" if get("suffix") is None else str(get("suffix")).strip()
+        records.append({
+            "community": "" if get("community") is None else str(get("community")).strip().upper(),
+            "name_key": name_key(prefix, street, type_, suffix),
+            "prefix": prefix,
+            "street_name": street,
+            "type": type_,
+            "suffix": suffix,
+            "low": _to_int(get("low")),
+            "high": _to_int(get("high")),
+            "parity": norm_parity(get("parity")),
+            "esn": pad_esn(get("esn"), config.esn_pad_width),
+        })
+    return records
 
 
 # --- exceptions --------------------------------------------------------------
 
 @dataclass
 class Exceptions:
-    """MSAG-not-GIS suppression rules loaded from the reference geodatabase."""
+    """MSAG-not-GIS suppression rules loaded from the exceptions CSV."""
     # (normalized street name, padded ESN) -> True ; ESN '' means any-ESN for that name
     by_name_esn: set = field(default_factory=set)
     by_name_any_esn: set = field(default_factory=set)     # normalized street name
@@ -244,72 +275,74 @@ class Exceptions:
 ESN_999 = "999"  # convention: any record on ESN 999 is excluded
 
 
-def load_exceptions(gdb, esn_pad_width=3):
-    """Build an Exceptions structure from MSAG_EXCEPTIONS + MSAG_PERMANENT."""
-    import arcpy
+def _dict_rows(path, required):
+    """(line, dict) pairs of a CSV, keyed by lower-case header. Refuses a missing column."""
+    rows = _read_rows(path)
+    header = [h.strip().lower() for h in (rows[0] if rows else [])]
+    missing = [c for c in required if c not in header]
+    if missing:
+        raise ValueError("%s: missing column(s) %s; header is %s"
+                         % (path, ", ".join(missing), ",".join(header)))
+    out = []
+    for line, values in enumerate(rows[1:], start=2):
+        if _row_is_blank(values):
+            continue
+        out.append((line, {h: (values[i].strip() if i < len(values) else "")
+                           for i, h in enumerate(header)}))
+    return out
+
+
+def load_exceptions(path, esn_pad_width=3):
+    """Build an Exceptions structure from a CSV.
+
+    Header: kind,community,prefix,street,type,suffix,esn. `kind` is `name` (suppress the
+    street, on one ESN, or on any ESN when esn is blank) or `permanent` (suppress one
+    community, street and ESN). Community is read only for `permanent` rows."""
     exc = Exceptions(esn_pad_width=esn_pad_width)
-
-    exc_tbl = gdb + "\\MSAG_EXCEPTIONS"
-    if arcpy.Exists(exc_tbl):
-        fields = ["Direction", "PrefixType", "Street", "SuffixType",
-                  "SuffixDirection", "ESN"]
-        with arcpy.da.SearchCursor(exc_tbl, fields) as cur:
-            for direction, pretype, street, suftype, sufdir, esn in cur:
-                nk = name_key(_first(direction, pretype), street, suftype, sufdir)
-                if not nk:
-                    continue
-                padded = pad_esn(esn, esn_pad_width)
-                if padded == "":
-                    exc.by_name_any_esn.add(nk)
-                else:
-                    exc.by_name_esn.add((nk, padded))
-
-    perm_tbl = gdb + "\\MSAG_PERMANENT"
-    if arcpy.Exists(perm_tbl):
-        fields = ["Community", "Direction", "Street", "SuffixType",
-                  "SuffixDirection", "ESN"]
-        with arcpy.da.SearchCursor(perm_tbl, fields) as cur:
-            for community, direction, street, suftype, sufdir, esn in cur:
-                nk = name_key(direction, street, suftype, sufdir)
-                comm = "" if community is None else str(community).strip().upper()
-                exc.permanent.add((comm, nk, pad_esn(esn, esn_pad_width)))
+    for line, r in _dict_rows(path, ("kind", "community", "prefix", "street", "type",
+                                     "suffix", "esn")):
+        nk = name_key(r["prefix"], r["street"], r["type"], r["suffix"])
+        padded = pad_esn(r["esn"], esn_pad_width)
+        kind = r["kind"].lower()
+        if kind == "name":
+            if not nk:
+                continue   # a blank name would suppress every record that has no name
+            if padded == "":
+                exc.by_name_any_esn.add(nk)
+            else:
+                exc.by_name_esn.add((nk, padded))
+        elif kind == "permanent":
+            exc.permanent.add((r["community"].upper(), nk, padded))
+        else:
+            raise ValueError("%s line %d: kind %r is not name or permanent"
+                             % (path, line, r["kind"]))
     return exc
 
 
-def load_authoritative_names(gdb):
-    """Build the authoritative {(community_upper, name_key)} set from DOMAINSTREETNAMES.
+def load_authoritative_names(path):
+    """Build the authoritative {(community_upper, name_key)} set from a CSV.
 
-    Returns None if the table is absent so STREET-11 stays in degraded mode.
-    """
-    import arcpy
-    tbl = gdb + "\\DOMAINSTREETNAMES"
-    if not arcpy.Exists(tbl):
-        return None
+    Header: community,street_name. A row with a blank street name is skipped."""
     names = set()
-    with arcpy.da.SearchCursor(tbl, ["Community", "StreetName"]) as cur:
-        for community, street in cur:
-            nk = normalize(street)
-            if not nk:
-                continue
-            comm = "" if community is None else str(community).strip().upper()
-            names.add((comm, nk))
+    for _line, r in _dict_rows(path, ("community", "street_name")):
+        nk = normalize(r["street_name"])
+        if nk:
+            names.add((r["community"].upper(), nk))
     return names
 
 
 def authoritative_names_from_msag(records):
     """Build {(community_upper, name_key)} from the parsed MSAG rows themselves.
 
-    DOMAINSTREETNAMES is a frozen MapSAG-era table: it is not rebuilt from anything, has no
-    Source populated, and has drifted from the MSAG it is supposed to mirror -- GRANADA WAY
-    (RIVERTON) and eight other names are in the spreadsheet but not the table, so STREET-11 warns
-    on names the authoritative MSAG says are valid. The MSAG spreadsheet IS the authority these
-    tools follow, and it is the artifact the analyst actually maintains, so its names count as
-    authoritative too. Unioning the two means adding a road to the MSAG is enough -- no
-    geodatabase edit, in any of the shipped copies.
+    A separate street-name table is a frozen copy: nothing rebuilds it, and it drifts from the
+    MSAG it is supposed to mirror, so STREET-11 would warn on names the MSAG says are valid.
+    The MSAG file IS the authority these tools follow, and it is the artifact the analyst
+    actually maintains, so its names count as authoritative too. Unioning the two means adding
+    a road to the MSAG is enough.
 
     Keys are emitted PREFIX-STRIPPED to match street_checks._street_name_candidates, which
-    compares prefix-stripped forms because DOMAINSTREETNAMES stores '147TH', not 'SE 147TH PL'.
-    Emitting the MSAG's own 'SE 147TH PL' would add an entry nothing can ever match. Both the
+    compares prefix-stripped forms because a name table stores '20TH', not 'SE 20TH PL'.
+    Emitting the MSAG's own 'SE 20TH PL' would add an entry nothing can ever match. Both the
     full (street+type+suffix) and bare (street only) forms are emitted, since either source may
     carry the type where the other omits it.
     """
@@ -324,47 +357,37 @@ def authoritative_names_from_msag(records):
     return out
 
 
-def _first(*vals):
-    """First non-blank of the candidates (PREFIX may live in Direction or PrefixType)."""
-    for v in vals:
-        s = "" if v is None else str(v).strip()
-        if s:
-            return s
-    return ""
-
-
 def is_excepted(rec, exceptions, convention_only=False):
     """True if a reconcile finding for `rec` should be suppressed.
 
     `convention_only=True` applies ONLY the symmetric structural sentinels (ESN-999,
-    0-0 placeholder range, out-of-domain pseudo-ESN) — used for the GIS-not-MSAG
+    0-0 placeholder range, out-of-domain pseudo-ESN) - used for the GIS-not-MSAG
     direction. The data-driven by_name/permanent exceptions are MSAG-side authoritative
     omissions and must NOT suppress a real GIS-side defect, so they apply only when
     convention_only is False (the MSAG-not-GIS direction).
     """
     # The pure-convention sentinel suppressions (ESN-999, 0-0 placeholder range,
-    # out-of-domain >3-digit pseudo-ESN) do NOT depend on a loaded exceptions GDB,
+    # out-of-domain >3-digit pseudo-ESN) do NOT depend on a loaded exceptions file,
     # which is Optional; fall back to the standard 3-digit pad when it is absent.
     pad = exceptions.esn_pad_width if exceptions is not None else 3
     if rec.get("esn") == pad_esn(ESN_999, pad):
         return True
-    # Sentinel placeholder rows carry a structurally non-coverable 0-0 range
-    # (Example's MSAG uses ESN 099 / LOW=0 HIGH=0 for these). build_gis_msag can
-    # never emit such a range, so they are guaranteed-flagged noise, not a real
-    # reconciliation defect. Require an explicit 0 on at least one side so a
-    # record carrying no range info at all is not silently suppressed.
+    # Sentinel placeholder rows carry a structurally non-coverable 0-0 range (some MSAGs use
+    # LOW=0 HIGH=0 for a routing placeholder). build_gis_msag can never emit such a range, so
+    # they are guaranteed-flagged noise, not a real reconciliation defect. Require an explicit
+    # 0 on at least one side so a record carrying no range info at all is not silently
+    # suppressed.
     _lo, _hi = rec.get("low"), rec.get("high")
     if _lo in (None, 0) and _hi in (None, 0) and (_lo == 0 or _hi == 0):
         return True
-    # Non-geographic PSAP service pseudo-records (VOIP/WIRELESS 911 CALLER routing
-    # rows) carry out-of-domain 4+ digit ESNs. Every real MSAG and every GIS-derived
-    # ESN is a 3-digit numeric, so a non-3-digit numeric ESN can never match a GIS
-    # range and is not a coverable centerline defect.
+    # Non-geographic service pseudo-records (wireless or VoIP caller routing rows) can carry
+    # out-of-domain 4+ digit ESNs. A numeric ESN that is not esn_pad_width digits long can never
+    # match a GIS range and is not a coverable centerline defect.
     esn = rec.get("esn", "")
     if esn.isdigit() and len(esn) != pad:
         return True
     if exceptions is None or convention_only:
-        return False   # data-driven suppressions need the GDB and are MSAG-direction only
+        return False   # data-driven suppressions need the exceptions file and are MSAG-direction only
     nk = rec.get("name_key", "")
     if nk in exceptions.by_name_any_esn:
         return True
@@ -423,7 +446,7 @@ def ranges_cover(target_lo, target_hi, gis_ranges):
     """True if [target_lo, target_hi] is fully covered by the union of gis_ranges.
 
     gis_ranges is an iterable of (lo, hi) inclusive integer ranges. Coverage is
-    by union of overlapping/adjacent ranges (Spatial Pro "Inclusive Range").
+    by union of overlapping/adjacent ranges (an inclusive range).
     """
     if target_lo is None or target_hi is None:
         return False
@@ -495,7 +518,7 @@ def uncovered_spans(target_lo, target_hi, parity, gis_ranges, max_spans=3):
     as a list of (lo, hi) tuples.
 
     Reported so a range-mismatch finding can name the numbers that are actually missing.
-    Without it the finding could read "GIS 7512-7736 vs MSAG 7512-7736" -- true (the spans
+    Without it the finding could read "GIS 3000-3200 vs MSAG 3000-3200" -- true (the spans
     match) but self-contradictory to an analyst, because the real defect is a HOLE inside a
     span whose endpoints agree. Returns at most max_spans entries; the caller says "and N
     more" rather than printing a wall of numbers.
@@ -546,8 +569,8 @@ def uncovered_for_record(rec, gis_in_group, max_spans=3):
     gaps = (uncovered_spans(lo, hi, "E", side_ranges("E"), None)
             + uncovered_spans(lo, hi, "O", side_ranges("O"), None))
     gaps.sort()
-    # The even and odd passes describe the SAME hole from two sides (5890-5988 and
-    # 5891-5989); an analyst reads that as one gap, 5890-5989. Merge overlapping or
+    # The even and odd passes describe the SAME hole from two sides (1200-1298 and
+    # 1201-1299); an analyst reads that as one gap, 1200-1299. Merge overlapping or
     # adjacent spans so the finding says what a person would say.
     merged = []
     for lo_i, hi_i in gaps:
@@ -633,8 +656,9 @@ def _has_uncovered_address(rec, other_ranges, addr_index):
 def reconcile(msag_records, gis_records, exceptions=None, addr_index=None):
     """Bidirectional NENA 71-501 reconcile by (community, name_key, parity).
 
-    Returns dict with lists msag_not_gis, gis_not_msag, attr_mismatch and counts
-    + match_rate (fraction of MSAG records matched). Pure-Python (dicts only).
+    Returns dict with lists msag_not_gis, gis_not_msag, attr_mismatch, range_mismatch and
+    counts + match_rate (fraction of eligible MSAG records covered) + exact_rate (fraction
+    whose extent equals one whole GIS run). Pure-Python (dicts only).
 
     When addr_index (from build_msag_addr_index) is provided, a not-covered range is
     only reported when a real address actually occupies its uncovered portion -- benign
@@ -650,6 +674,8 @@ def reconcile(msag_records, gis_records, exceptions=None, addr_index=None):
     matched = 0
     excepted = 0
     addr_gated = 0
+    exact = 0
+    runs = gis_runs(gis_records)
 
     for rec in msag_records:
         # Convention-excluded records (ESN-999 sentinels, 4+ digit pseudo-ESNs,
@@ -658,6 +684,8 @@ def reconcile(msag_records, gis_records, exceptions=None, addr_index=None):
         if is_excepted(rec, exceptions):
             excepted += 1
             continue
+        if exact_tuple(rec, runs):
+            exact += 1
         gis_in_group = [g for g in gis_groups.get(_group_key(rec), [])
                         if _parity_compat(rec.get("parity"), g.get("parity"))]
         covered = _covered_by(rec, gis_in_group)
@@ -678,14 +706,12 @@ def reconcile(msag_records, gis_records, exceptions=None, addr_index=None):
                 })
             continue
         # SAME ROAD, DIFFERENT EXTENT. The name/community/parity group matches and the
-        # ranges OVERLAP, but an endpoint differs -- MapSAG reports this as its own class
-        # and it is the single largest thing this reconcile used to lose. Before this
-        # bucket existed such a record was not "covered", so it was not matched, and then
-        # the address gate below usually dropped it entirely: it deflated the NENA match
-        # rate while appearing in NO bucket (measured 2026-08-27: 75 of 15,163 records
-        # unaccounted for, which is why matched+excepted+msag_not_gis did not sum to the
-        # total). Reported REGARDLESS of whether an address occupies the gap: the ranges
-        # disagreeing is the finding, and MapSAG shows it either way.
+        # ranges OVERLAP, but an endpoint differs. It is its own class, and without it such
+        # a record was not "covered", so it was not matched, and then the address gate below
+        # usually dropped it entirely: it deflated the match rate while appearing in NO
+        # bucket, so matched+excepted+msag_not_gis did not sum to the total. Reported
+        # REGARDLESS of whether an address occupies the gap: the ranges disagreeing is the
+        # finding.
         overlapping = [g for g in gis_in_group if _overlaps(rec, g)]
         differing = [g for g in overlapping
                      if g.get("low") != rec.get("low") or g.get("high") != rec.get("high")]
@@ -731,6 +757,8 @@ def reconcile(msag_records, gis_records, exceptions=None, addr_index=None):
     # from the denominator so the NENA KPI is not deflated by known exceptions.
     denom = total - excepted
     match_rate = (matched / denom) if denom else 1.0
+    exact_rate = (exact / denom) if denom else 1.0
+    accounted = matched + excepted + len(msag_not_gis) + len(range_mismatch) + addr_gated
     return {
         "msag_not_gis": msag_not_gis,
         "gis_not_msag": gis_not_msag,
@@ -749,8 +777,14 @@ def reconcile(msag_records, gis_records, exceptions=None, addr_index=None):
             # Counted so matched + excepted + msag_not_gis + range_mismatch + addr_gated
             # sums to msag_total -- the reconcile must add up or the KPI cannot be trusted.
             "addr_gated": addr_gated,
+            # Records that landed in no bucket. Always 0; a non-zero value means a record was
+            # lost and no rate printed beside it can be trusted.
+            "unaccounted": total - accounted,
+            "exact": exact,
+            "eligible": denom,
         },
         "match_rate": match_rate,
+        "exact_rate": exact_rate,
     }
 
 
@@ -760,3 +794,97 @@ def _overlaps(a, b):
     if None in (alo, ahi, blo, bhi):
         return False
     return alo <= bhi and blo <= ahi
+
+
+# --- exact-tuple rate --------------------------------------------------------
+
+def _parity_span(lo, hi, par):
+    """The first and last house number of parity `par` ('E' or 'O') inside [lo, hi], or None
+    when the range holds no number of that parity."""
+    start = lo if (lo % 2 == 0) == (par == "E") else lo + 1
+    end = hi if (hi % 2 == 0) == (par == "E") else hi - 1
+    return (start, end) if start <= end else None
+
+
+def _parities(parity):
+    """The parities a record addresses. E and O address one; B and blank address both."""
+    p = (parity or "").strip().upper()
+    return (p,) if p in ("E", "O") else ("E", "O")
+
+
+def gis_runs(gis_records):
+    """Merge GIS side records into maximal runs.
+
+    Returns {(community, name_key, esn, parity): [(lo, hi), ...]} where parity is 'E' or 'O'
+    and each (lo, hi) is the first and last house number of that parity in a run. Two spans
+    merge when they overlap or touch within one parity step (a gap of at most 2). A 'B' or
+    blank side feeds both parities. This is what a single MSAG record would list if the
+    two sources agreed to the letter."""
+    spans = defaultdict(list)
+    for g in gis_records:
+        for par in _parities(g.get("parity")):
+            span = _parity_span(g["low"], g["high"], par)
+            if span:
+                spans[(g["community"], g["name_key"], g["esn"], par)].append(span)
+    runs = {}
+    for key, items in spans.items():
+        items.sort()
+        merged = [items[0]]
+        for lo, hi in items[1:]:
+            if lo <= merged[-1][1] + 2:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], hi))
+            else:
+                merged.append((lo, hi))
+        runs[key] = merged
+    return runs
+
+
+def exact_tuple(rec, runs):
+    """True when the MSAG record equals GIS runs on community, street, ESN, parity and extent.
+
+    An E or O record must equal one run of that parity. A B record must equal one even run
+    and one odd run, because the two sources write the same street as one 'B' row or as two
+    side rows. A record with no range, or an empty one, is never exact."""
+    lo, hi = rec.get("low"), rec.get("high")
+    if lo is None or hi is None:
+        return False
+    if lo > hi:
+        lo, hi = hi, lo
+    needed = [(par, _parity_span(lo, hi, par)) for par in _parities(rec.get("parity"))]
+    needed = [(par, span) for par, span in needed if span]
+    if not needed:
+        return False
+    return all(span in runs.get((rec.get("community", ""), rec.get("name_key", ""),
+                                 rec.get("esn", ""), par), ())
+               for par, span in needed)
+
+
+# --- roll-up -----------------------------------------------------------------
+
+ROLLUP_CLASSES = ("msag_not_gis", "gis_not_msag", "range_mismatch", "attr_mismatch")
+
+
+def rollup(res):
+    """Group a reconcile result by street.
+
+    Returns a list of {community, name_key, total, msag_not_gis, gis_not_msag,
+    range_mismatch, attr_mismatch}, largest total first, ties by community and name. A
+    thousand findings across forty streets reads as forty rows."""
+    rows = {}
+
+    def bump(rec, cls):
+        key = (rec.get("community", ""), rec.get("name_key", ""))
+        row = rows.setdefault(key, dict({c: 0 for c in ROLLUP_CLASSES},
+                                        community=key[0], name_key=key[1], total=0))
+        row[cls] += 1
+        row["total"] += 1
+
+    for rec in res["msag_not_gis"]:
+        bump(rec, "msag_not_gis")
+    for rec in res["gis_not_msag"]:
+        bump(rec, "gis_not_msag")
+    for item in res["range_mismatch"]:
+        bump(item["msag"], "range_mismatch")
+    for item in res["attr_mismatch"]:
+        bump(item["msag"], "attr_mismatch")
+    return sorted(rows.values(), key=lambda r: (-r["total"], r["community"], r["name_key"]))

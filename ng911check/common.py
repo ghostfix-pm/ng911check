@@ -17,7 +17,7 @@ def _clean(v):
 def seg_label(row):
     """How a street segment is named in a finding: its SEGMENT_ID, or "OID n" when that
     is blank. SEGMENT_ID is often a Double, so interpolating it raw would print
-    "SEG 36247.0", a value that matches nothing when pasted into a definition query."""
+    "SEG 12345.0", a value that matches nothing when pasted into a definition query."""
     return _clean(row.get("SEGMENT_ID")) or "OID %s" % row.get("_OID")
 
 
