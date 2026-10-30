@@ -56,6 +56,10 @@ Override effects on this run:
 
 NOTICE: XLAYER-13 was skipped: it needs street geometry (a GeoJSON streets file).
 NOTICE: XLAYER-15 was skipped: it needs modifier domains (--domains with premod, postmod or pretypesep rows).
+NOTICE: XLAYER-18 was skipped: it needs street geometry (a GeoJSON streets file).
+NOTICE: XLAYER-19 was skipped: it needs street geometry (a GeoJSON streets file).
+NOTICE: XLAYER-17 was skipped: it needs street geometry (a GeoJSON streets file).
+NOTICE: STREET-14 was skipped: it needs street geometry (a GeoJSON streets file).
 NOTICE: STREET-11 ran in DEGRADED mode: no MSAG was loaded, so there was no authoritative road-name list to check against. Its findings here are a fallback heuristic: it flags a name only because that name shares no significant word with any OTHER name in the street layer, which false-positives on legitimately unique roads, and they are emitted at INFO to say so. A road being in the MSAG cannot help in this mode, because this run never opened the MSAG. For the real check, run with --msag.
 
 Findings: 3 ERROR, 0 WARNING, 2 INFO
@@ -123,18 +127,33 @@ PASS  ADDR-05 declares exactly the columns it reads
 ...
 PASS  xlayer-10 flags six name pairs that do not agree
 ...
+PASS  xlayer-18 needs the gap to be more than the margin, not equal to it  <-- pinned defect
+...
+PASS  xlayer-19 ignores a nearer centerline that has no address range  <-- pinned defect
+...
+PASS  xlayer-17 leaves out a point whose nearest spot is the end of the line  <-- pinned defect
+...
+PASS  street-14 skips a closed loop, which meets its feeder head-to-head whichever way it was drawn  <-- pinned defect
+...
+PASS  a GeoJSON run reports STREET-14, XLAYER-17, XLAYER-18 and XLAYER-19 on the rows that hold the defects
+...
 --------------------------------------------------------------------
-708 assertions, 0 failed
+798 assertions, 0 failed
 ```
 
-The full run prints all 708 assertions. Each `...` line above is where the block is cut.
+The full run prints all 798 assertions. Each `...` line above is where the block is cut.
 `python -m ng911check --self-test` exits 0 when every assertion passes and 1 when one fails.
 
 | Host | Python | Assertions |
 |---|---|---|
-| Windows | 3.13.2 | 708 assertions, 0 failed |
-| Windows | 3.9.25 | 708 assertions, 0 failed |
-| Ubuntu | 3.12.3 | 708 assertions, 0 failed |
+| Windows | 3.13.2 | 798 assertions, 0 failed |
+| Windows | 3.12.10 | 798 assertions, 0 failed |
+| Windows | 3.11.8 | 798 assertions, 0 failed |
+| Ubuntu | 3.12.3 | 798 assertions, 0 failed |
+
+I had no Python 3.9 interpreter on the Windows machine for this release, so the 3.9 row of the
+earlier table is gone. The self-test parses every source file with `feature_version=(3, 9)` and fails
+on an f-string, but that is not a run on 3.9.
 
 The counts are equal on every host because the self-test never branches on the platform. It writes
 its files to a temporary folder and removes the folder at the end.
@@ -162,7 +181,10 @@ Other open tools check NG9-1-1 data. Use them if one fits better.
   search window around each point, which this tool does not.
 - [A-Charvin/Fishbone-QA-911](https://github.com/A-Charvin/Fishbone-QA-911) is an ArcGIS Pro tool
   that draws a line from each address point to its road segment, so a person sees the mismatches
-  on a map. It needs ArcGIS Pro.
+  on a map. It needs ArcGIS Pro. It is the closest tool to XLAYER-18 that I found, and the map
+  view is something this tool does not have.
+- [A-Charvin/Parity-QA-911](https://github.com/A-Charvin/Parity-QA-911) derives and validates the
+  left and right address parity of a centerline. It is under the MIT licence and needs ArcGIS Pro.
 - The NENA GIS data model templates at
   [NENA911/NG911GISDataModel](https://github.com/NENA911/NG911GISDataModel) define the schema that
   most of these tools check against.
@@ -172,9 +194,12 @@ the effect of every override. It reports the exact-tuple rate and the file age b
 match rate. It generates its own check catalog from the code and fails when the two disagree. It
 does not replace a state submission tool, and it does not edit your data.
 
-A search of GitHub with `gh search repos` on the day this was written found these repositories and
-others that were not relevant. It found no repository named `ng911check` except this one. That
-shows only that the search found nothing more.
+A search of GitHub with `gh search repos` found these repositories and others that were not
+relevant. It found no repository named `ng911check` except this one. The searches `ng911`,
+`ng911 qa`, `centerline address range`, `street centerline direction` and `geocode centerline` were
+run on 2026-10-30. I read only the repository descriptions for Fishbone-QA-911 and Parity-QA-911, not
+their code. I cannot say whether either one checks the order of numbers along a street, or the
+direction of a line. The search shows only that I found nothing more.
 
 ## Quick start
 
@@ -275,7 +300,7 @@ carry address points through two coordinate columns. A CSV street layer has no l
 A GeoJSON layer must be a `FeatureCollection`. Addresses take `Point`. Streets take `LineString` or
 `MultiLineString`. Response areas take `Polygon` or `MultiPolygon`. Coordinates are longitude then
 latitude. RFC 7946 section 3.1.1 says: "The first two elements are longitude and latitude, or
-easting and northing, precisely in that order". Streets with geometry turn on XLAYER-13.
+easting and northing, precisely in that order". Streets with geometry turn on XLAYER-13, XLAYER-17, XLAYER-18, XLAYER-19 and STREET-14.
 XLAYER-05 also needs `--optional` or `[checks] XLAYER-05 = on`.
 
 A GeoJSON property may be a string, a number or null. A number in a text column is read as the
@@ -302,7 +327,7 @@ weaken a run. A key you leave out takes its built-in default.
 
 | Section | Keys |
 |---|---|
-| `[thresholds]` | `min_address`, `max_address`, `max_range_gap`, `distance_tolerance_ft`, `sync_threshold` |
+| `[thresholds]` | `min_address`, `max_address`, `max_range_gap`, `distance_tolerance_ft`, `sync_threshold`, and the five range fit keys in the Range fit section |
 | `[agency]` | `expected_agid` (required), `strict_fqdn`, `expected_state`, `counties` |
 | `[names]` | `ignored`: street names the name checks skip. A name matches whole words: `ELM` skips `ELM ST` and `N ELM AVE`, never `ELMWOOD DR`. |
 | `[checks]` | `CHECK-ID = on` or `off` |
@@ -380,6 +405,105 @@ assessment and a GeoComm case study, attribute a 98 percent synchronisation rate
 *Synchronizing GIS databases with MSAG and ALI*. I did not read the NENA text. The floor is a
 setting you can change.
 
+## Range fit
+
+A geocoder finds an address by its number and the range of a segment. A map shows where the point
+really is. When the two disagree, a responder who follows the number goes to the wrong block, and
+no ESN or parity check says so, because the number, the parity and the ESN all agree with each
+other. Four checks compare the number with the place. They need a GeoJSON street layer, because
+they need the line.
+
+| Check | Question |
+|---|---|
+| XLAYER-18 | The segment whose range covers the number is far from the point, and another segment of the same street is much nearer. The point fronts a block whose range excludes its number. |
+| XLAYER-17 | Along one side of one line, the numbers should rise or fall. Is this number out of order with its neighbours? |
+| XLAYER-19 | The point is much nearer a ranged street of another name than its own street. |
+| STREET-14 | Two segments of one street name both end, or both start, at one point. One of them is drawn against the street. |
+
+Each of the four reads positions only. None edits a point or a line.
+
+**XLAYER-18.** The covering segment is the same-name segment whose range and parity contain the
+number. The nearest other segment is the nearest same-name segment that does not. The check reports
+a point when the covering segment is more than `wb_min_margin_ft` farther away and at least
+`wb_min_ratio` times as far. A number that no segment covers is XLAYER-02, not this check.
+
+**XLAYER-17.** Each point joins its nearest same-name line and the left or right side of it. A point
+whose nearest spot is a line end has no side and is left out. Points that share a number, a complex,
+count as one position, at the mean of their distances along the line. A side needs four positions.
+The direction of the numbering comes from the numbers: a Spearman rank correlation of 0.5 or more,
+or -0.5 or less, between the order along the line and the order of the numbers. A side without a
+clear direction is skipped, so a road numbered against the way it was drawn still works. A position
+is out of sequence when its two neighbours agree with the direction and its number lies outside
+them. The first and the last position have one neighbour and are never reported. The check keeps a
+position that sits at least `oo_min_displacement_ft` from where its number belongs. That place is
+half way between the two other positions whose numbers surround it, or the nearest end. Set the key
+to `0` to see every swap. In the self-test, two houses that swapped side by side sit 130 and 140 ft
+from their places, so they stay under the default.
+
+**XLAYER-19.** The check takes the nearest centerline that has an address range, of any name. A
+centerline without a range, such as a private drive, is skipped, and so is a name in `[names]
+ignored`. The check reports a point when its own street is more than `nm_min_margin_ft` farther away
+and at least `nm_min_ratio` times as far.
+
+**STREET-14.** Every segment has a first and a last vertex. Two segments of one name that share an end
+point, within a foot on both axes, are a candidate when both ends are last vertices or both are
+first vertices. Three kinds of pair are skipped because nothing in them is wrong. First, a segment
+with no address range on either side. Second, a closed loop, whose first and last vertex are one
+point, so its feeder is head-to-head or tail-to-tail with it whichever way it was drawn. Third, a
+pair whose ranges overlap, which is a divided road. A pair that meets at both ends is reported once.
+
+| Key under `[thresholds]` | Default | Meaning |
+|---|---|---|
+| `oo_min_displacement_ft` | `150` | XLAYER-17 keeps a point at least this far from where its number belongs. `0` or more. |
+| `wb_min_margin_ft` | `150` | XLAYER-18: the covering segment must be more than this much farther. `0` or more. |
+| `wb_min_ratio` | `2.0` | XLAYER-18: and at least this many times as far. `1.0` or more. |
+| `nm_min_margin_ft` | `5000` | XLAYER-19: the own street must be more than this much farther. `0` or more. |
+| `nm_min_ratio` | `2.0` | XLAYER-19: and at least this many times as far. `1.0` or more. |
+
+The defaults are starting values that I chose. No standard defines them, and I did not calibrate
+them against a real county layer. Tune them on your data. The tool refuses a value below the
+minimum in the table, because a negative margin or a ratio under 1 reports a point that sits on its
+own street.
+
+This run uses two synthetic files in the `demo` folder: eight address points and four segments, in
+feet. One segment is drawn against its neighbour. One address number is out of order, one point
+fronts the wrong block, and one point is far from its street.
+
+```
+$ python -m ng911check --addresses demo/fit_addresses.geojson --streets demo/fit_streets.geojson --settings demo/agency.ini --units feet --show 4
+...
+Findings: 0 ERROR, 4 WARNING, 4 INFO
+  STREET-14          WARNING  1
+  XLAYER-17          WARNING  1
+  XLAYER-18          WARNING  1
+  XLAYER-19          WARNING  1
+  STREET-11          INFO     1
+  XLAYER-14          INFO     3
+
+First 4 finding(s), most severe first:
+  WARNING STREET-14  street row 1: SEG 1 and SEG 3 of 'ELM ST' meet head-to-head, so one is drawn against the street
+  WARNING XLAYER-17  address row 3: house number 121 is out of sequence on the left side of SEG 1: its neighbours are 103 and 107, and it sits 300 ft from where its number belongs
+  WARNING XLAYER-18  address row 7: house number 105 is 800 ft from SEG 1, whose range covers it, and 100 ft from SEG 2, whose range does not
+  WARNING XLAYER-19  address row 8: house number 115 on 'ELM ST' is 18100 ft from its street (SEG 2) and 1000 ft from 'OAK AVE' (SEG 4)
+$ echo $?
+0
+```
+
+All four are WARNING findings, so the run exits 0. A `[severity]` line may raise one to ERROR.
+
+What the self-test exercises. It builds each case as rows and lines in feet. It pins the boundary
+of every threshold: a gap equal to the margin is not reported, a ratio exactly at the limit is
+reported, and a displacement exactly at the limit is kept. It runs the four checks end to end from
+two GeoJSON files through the reader and the command line. It also runs a street file with no
+geometry, which skips all four checks with a notice. The checks have no network path, so no local
+`http.server` stub applies.
+
+I also changed 36 operators and boundaries in the new code by hand and re-ran the self-test. The
+first run failed for 30 of them and left 6 alive. I added cases for three of the survivors, and they
+now fail. One survivor was a filter in XLAYER-19 that changed no verdict, so I removed it. Two
+survivors are in the early skip of XLAYER-19, which only saves time, so no assertion can pin them.
+The mutation script is not part of the repository.
+
 ## The check catalog
 
 The catalog below is generated from the registry. `python -m ng911check --catalog-check README.md`
@@ -418,6 +542,7 @@ what a check needs from the run. A check that does not get it is skipped, and th
 | STREET-11 | street | WARNING, INFO | yes | - | Flag a street name that is not in the authoritative list, or that shares no word with any other name. |
 | STREET-12 | street | WARNING | yes | - | Flag a gap in the address numbering between two segments of one street. |
 | STREET-13 | street | WARNING | yes | - | Flag an ESN or ZIP change between two range-adjacent segments of one street side. |
+| STREET-14 | street | WARNING | yes | geometry | Flag two same-name centerlines that meet head-to-head or tail-to-tail, so one is drawn against the street. |
 | XLAYER-01 | both | ERROR | yes | - | Flag an address ESN that differs from the ESN of the street side that covers it. |
 | XLAYER-02 | both | ERROR | yes | - | Flag an address number that lies outside every range of its street. |
 | XLAYER-03 | address | WARNING | yes | - | Flag an address whose odd or even number contradicts the declared parity of its covering side. |
@@ -435,6 +560,9 @@ what a check needs from the run. A check that does not get it is skipped, and th
 | XLAYER-14 | street | INFO | yes | addresses | Report a street segment that has an address range but no address point inside it. |
 | XLAYER-15 | both | WARNING | yes | modifier domains | Flag a modifier or separator value that is not in the supplied domain. |
 | XLAYER-16 | both | WARNING, ERROR, INFO | no | msag | Compare the MSAG with the GIS ranges and report coverage, exact-tuple rate, differences and file age. |
+| XLAYER-17 | address | WARNING | yes | geometry | Flag an address whose house number is out of order with its neighbours along its street. |
+| XLAYER-18 | address | WARNING | yes | geometry | Flag an address that sits clearly nearer a block of its street whose range excludes its number. |
+| XLAYER-19 | address | WARNING | yes | geometry | Flag an address that sits clearly nearer a ranged street of another name than its own street. |
 <!-- catalog:end -->
 
 ## What was verified against documentation
@@ -445,10 +573,20 @@ This package relies on no Esri, SQL Server, PROJ, FEMA or Census behaviour. It n
 - USPS Publication 28: section 233 lists the directionals, and Appendix C1 lists the street suffix
   abbreviations. The built-in tables come from those two. No vendor or agency domain file ships.
   The self-test fails when the package folder holds any file that is not Python.
-- RFC 7946 section 3.1.1, quoted above, for the coordinate order.
+- RFC 7946 section 3.1.1, quoted above, for the coordinate order. Section 3.1.4 says a `LineString` is
+  "an array of two or more positions". The RFC attaches no meaning to the direction of a line, so
+  "first vertex" in STREET-14 means the first position in the array, which is the order of drawing.
+- The Spearman rank correlation formula `1 - 6 * sum(d^2) / (n * (n^2 - 1))`, from the
+  [Spearman's rank correlation coefficient](https://en.wikipedia.org/wiki/Spearman%27s_rank_correlation_coefficient)
+  page. The page says it holds only when all ranks are distinct. XLAYER-17 merges points that share a
+  number before it ranks, so the ranks are distinct. The self-test pins -1, 0, 0.5 and 0.8.
 - NIST SP 811, appendix B.8, for the foot.
 - The IUGG mean radius R1 of 6371008.7714 m, rounded in the code to 6371008.8 m, from the table on the
   [Earth radius](https://en.wikipedia.org/wiki/Earth_radius) page.
+
+Not verified: that an address range runs with the drawing direction of the line, FROM at the first
+vertex. STREET-14 assumes it, and I did not read a standard that says so. Where a road is numbered in
+opposite directions on purpose, a finding is wrong and `[checks] STREET-14 = off` removes it.
 
 Not verified: the exact grammar of an NGUID. The tool checks the form `localid@authority`, a
 localid of letters, digits, `_`, `.` and `-`, and an authority that equals the expected agency. I
@@ -460,15 +598,31 @@ ESN rule in ADDR-05, one to five digits and not zero, is also a local choice.
 
 - The tool has not run on a real county layer. Every number in this file comes from synthetic data.
 - The street-name and ESN domains are what the checks need, not a copy of a state schema.
+- The range fit thresholds are untested against real data. Their defaults are my starting values.
+- XLAYER-17 orders points on one segment at a time. It does not follow a street across segments, so a
+  side with fewer than four numbers on one segment is skipped. It does not borrow the numbers of a
+  joined segment. It reports every point of a complex that is out of sequence, where one unit of the
+  complex might be fine.
+- XLAYER-18 and XLAYER-19 judge each point alone. They do not hold back a complex unless every unit
+  fails.
+- XLAYER-19 scans every ranged segment for each point that is farther than the margin from its own
+  street. With the default 5,000 ft margin that is few points. With a margin of 0 on a large layer it
+  is slow, and a grid index would fix that. The code carries a `shortcut:` comment.
+- The early skip in XLAYER-19 (a point within the margin of its own street) and the `d_own <=
+  margin` boundary of that skip cannot change a verdict, so no assertion can pin them.
+- STREET-14 compares a segment's first and last vertex only. For a `MultiLineString` those are the
+  first vertex of the first part and the last vertex of the last part. It joins ends within a foot on
+  each axis, a square and not a circle. It does not tell two roads of one name in different places
+  apart. It treats a pair with overlapping ranges as a divided road, which hides a reversed segment
+  that also overlaps its neighbour. STREET-04 reports the overlap.
 - Points on a polygon edge, and points in two overlapping polygons, take the first polygon in the
   file. Both are topology defects, which this package does not judge.
 - STREET-11 without a name list is a heuristic and reports at INFO. A name list or an MSAG turns on
   the real check.
-- The checks that need a street geometry (XLAYER-05, XLAYER-13) need a GeoJSON street layer.
+- The checks that need a street geometry (XLAYER-05, XLAYER-13, XLAYER-17, XLAYER-18, XLAYER-19,
+  STREET-14) need a GeoJSON street layer.
 - The saint names that XLAYER-10 expands (`ST BENEDICT` to `SAINT BENEDICT`) are a closed list in
   the code. Add a name there for a new saint road.
-- A range check for address points against the range of the segment they front is not in this
-  release.
 - A match rate below the floor is only an INFO line (`BELOW FLOOR`), and an INFO metric line cannot be escalated. A run with a 33 percent MSAG match rate and no GIS-side ERROR exits 0. The exit code never reflects `min_match_rate`.
 - An MSAG with no eligible record, because every record is excepted or the file has no data rows, prints a 100 percent rate over 0 records. Only a WARNING says that nothing was compared, so the run exits 0.
 - The MSAG source age comes from the file modification time. A freshly copied or downloaded MSAG reads as 0 days old.

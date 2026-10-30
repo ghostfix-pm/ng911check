@@ -56,11 +56,11 @@ def listing(tmp):
 
 def section(h):
     c = h.check
-    c(__version__ == "0.2.0", "the package version is 0.2.0")
+    c(__version__ == "0.3.0", "the package version is 0.2.0")
 
     # ---- the quiet commands
     code, out, err = call(["--version"])
-    c(code == 0 and out == "ng911check 0.2.0\n", "--version prints the version and exits 0")
+    c(code == 0 and out == "ng911check 0.3.0\n", "--version prints the version and exits 0")
     code, out, err = call(["--catalog"])
     c(code == 0 and out.startswith("| Check |") and "XLAYER-16" in out and "ADDR-01" in out, "--catalog prints the check table and exits 0")
 

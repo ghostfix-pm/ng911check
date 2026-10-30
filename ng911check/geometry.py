@@ -93,6 +93,10 @@ class Polyline(object):
     def distance_to(self, x, y):
         return self.query(x, y)[1]
 
+    def ends(self):
+        """The first vertex of the first part and the last vertex of the last part."""
+        return (self.parts[0][0], self.parts[-1][-1])
+
     def midpoint(self):
         """The point half way along the first part, used to place a finding on the map."""
         part = self.parts[0]

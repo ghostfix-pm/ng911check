@@ -75,6 +75,12 @@ class Context:
     max_address: int = 99999
     max_range_gap: int = 2          # STREET-12/13: numbering gap still treated as one run
     street_names_ignored: frozenset = frozenset()
+    # XLAYER-17/18/19: calibration, in feet or as a ratio. A starting value, not a standard.
+    oo_min_displacement_ft: float = 150.0
+    wb_min_margin_ft: float = 150.0
+    wb_min_ratio: float = 2.0
+    nm_min_margin_ft: float = 5000.0
+    nm_min_ratio: float = 2.0
     esn_pad_width: int = 3
     # --- response-area rules (optional; filled by the runner from the [areas] settings) ---
     area_rules: dict = field(default_factory=dict)   # check id -> response_area_checks.AreaRule

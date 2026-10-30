@@ -1,0 +1,213 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "type": "Feature",
+   "properties": {
+    "SEGMENT_ID": 1,
+    "RCL_NGUID": "RCL1@agency.example.org",
+    "NAME": "ELM",
+    "PREFIX": "",
+    "TYPE": "ST",
+    "SUFFIX": "",
+    "FROMLEFT": 101,
+    "TOLEFT": 199,
+    "FROMRIGHT": 100,
+    "TORIGHT": 198,
+    "Parity_L": "O",
+    "Parity_R": "E",
+    "ONEWAY": "B",
+    "LCITY": "TESTVILLE",
+    "RCITY": "TESTVILLE",
+    "LESN": "100",
+    "RESN": "100",
+    "LEFTZIP": "32000",
+    "RIGHTZIP": "32000",
+    "State_L": "FL",
+    "State_R": "FL",
+    "County_L": "EXAMPLE",
+    "County_R": "EXAMPLE",
+    "IncMuni_L": "TESTVILLE",
+    "IncMuni_R": "TESTVILLE",
+    "St_Name": "ELM",
+    "St_PreDir": "",
+    "St_PosTyp": "STREET",
+    "St_PreTyp": "",
+    "St_PreMod": "",
+    "St_PosMod": "",
+    "St_PreSep": "",
+    "DiscrpAgID": "agency.example.org",
+    "COMPARE": "ELM ST"
+   },
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      0,
+      0
+     ],
+     [
+      1000,
+      0
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "SEGMENT_ID": 2,
+    "RCL_NGUID": "RCL2@agency.example.org",
+    "NAME": "ELM",
+    "PREFIX": "",
+    "TYPE": "ST",
+    "SUFFIX": "",
+    "FROMLEFT": 201,
+    "TOLEFT": 299,
+    "FROMRIGHT": 200,
+    "TORIGHT": 298,
+    "Parity_L": "O",
+    "Parity_R": "E",
+    "ONEWAY": "B",
+    "LCITY": "TESTVILLE",
+    "RCITY": "TESTVILLE",
+    "LESN": "100",
+    "RESN": "100",
+    "LEFTZIP": "32000",
+    "RIGHTZIP": "32000",
+    "State_L": "FL",
+    "State_R": "FL",
+    "County_L": "EXAMPLE",
+    "County_R": "EXAMPLE",
+    "IncMuni_L": "TESTVILLE",
+    "IncMuni_R": "TESTVILLE",
+    "St_Name": "ELM",
+    "St_PreDir": "",
+    "St_PosTyp": "STREET",
+    "St_PreTyp": "",
+    "St_PreMod": "",
+    "St_PosMod": "",
+    "St_PreSep": "",
+    "DiscrpAgID": "agency.example.org",
+    "COMPARE": "ELM ST"
+   },
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      0,
+      900
+     ],
+     [
+      1000,
+      900
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "SEGMENT_ID": 3,
+    "RCL_NGUID": "RCL3@agency.example.org",
+    "NAME": "ELM",
+    "PREFIX": "",
+    "TYPE": "ST",
+    "SUFFIX": "",
+    "FROMLEFT": 301,
+    "TOLEFT": 399,
+    "FROMRIGHT": 300,
+    "TORIGHT": 398,
+    "Parity_L": "O",
+    "Parity_R": "E",
+    "ONEWAY": "B",
+    "LCITY": "TESTVILLE",
+    "RCITY": "TESTVILLE",
+    "LESN": "100",
+    "RESN": "100",
+    "LEFTZIP": "32000",
+    "RIGHTZIP": "32000",
+    "State_L": "FL",
+    "State_R": "FL",
+    "County_L": "EXAMPLE",
+    "County_R": "EXAMPLE",
+    "IncMuni_L": "TESTVILLE",
+    "IncMuni_R": "TESTVILLE",
+    "St_Name": "ELM",
+    "St_PreDir": "",
+    "St_PosTyp": "STREET",
+    "St_PreTyp": "",
+    "St_PreMod": "",
+    "St_PosMod": "",
+    "St_PreSep": "",
+    "DiscrpAgID": "agency.example.org",
+    "COMPARE": "ELM ST"
+   },
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      2000,
+      0
+     ],
+     [
+      1000,
+      0
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "SEGMENT_ID": 4,
+    "RCL_NGUID": "RCL4@agency.example.org",
+    "NAME": "OAK",
+    "PREFIX": "",
+    "TYPE": "AVE",
+    "SUFFIX": "",
+    "FROMLEFT": 1,
+    "TOLEFT": 99,
+    "FROMRIGHT": 2,
+    "TORIGHT": 98,
+    "Parity_L": "O",
+    "Parity_R": "E",
+    "ONEWAY": "B",
+    "LCITY": "TESTVILLE",
+    "RCITY": "TESTVILLE",
+    "LESN": "100",
+    "RESN": "100",
+    "LEFTZIP": "32000",
+    "RIGHTZIP": "32000",
+    "State_L": "FL",
+    "State_R": "FL",
+    "County_L": "EXAMPLE",
+    "County_R": "EXAMPLE",
+    "IncMuni_L": "TESTVILLE",
+    "IncMuni_R": "TESTVILLE",
+    "St_Name": "OAK",
+    "St_PreDir": "",
+    "St_PosTyp": "AVENUE",
+    "St_PreTyp": "",
+    "St_PreMod": "",
+    "St_PosMod": "",
+    "St_PreSep": "",
+    "DiscrpAgID": "agency.example.org",
+    "COMPARE": "OAK AVE"
+   },
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      0,
+      20000
+     ],
+     [
+      1000,
+      20000
+     ]
+    ]
+   }
+  }
+ ]
+}

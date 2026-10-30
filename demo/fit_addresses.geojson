@@ -1,0 +1,317 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "type": "Feature",
+   "properties": {
+    "Add_Number": 101,
+    "PREFIX": "",
+    "STREET_NA": "ELM",
+    "TYPE": "ST",
+    "SUFFIX": "",
+    "UNIT": "",
+    "BLDG": "",
+    "ADDRESS": "101 ELM ST",
+    "HOUSE_NU": "101",
+    "CITY": "TESTVILLE",
+    "INC_MUNI": "TESTVILLE",
+    "STATE": "FL",
+    "COUNTY": "EXAMPLE",
+    "Country": "US",
+    "ZIP_CODE": "32000",
+    "ESN": "100",
+    "STATUS": "ACTIVE",
+    "Site_NGUID": "ADR1@agency.example.org",
+    "DiscrpAgID": "agency.example.org",
+    "COMPARE": "ELM ST",
+    "St_Name": "ELM",
+    "St_PreDir": "",
+    "St_PosTyp": "STREET",
+    "St_PreTyp": "",
+    "St_PreMod": "",
+    "St_PosMod": "",
+    "St_PreSep": ""
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     100,
+     30
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "Add_Number": 103,
+    "PREFIX": "",
+    "STREET_NA": "ELM",
+    "TYPE": "ST",
+    "SUFFIX": "",
+    "UNIT": "",
+    "BLDG": "",
+    "ADDRESS": "103 ELM ST",
+    "HOUSE_NU": "103",
+    "CITY": "TESTVILLE",
+    "INC_MUNI": "TESTVILLE",
+    "STATE": "FL",
+    "COUNTY": "EXAMPLE",
+    "Country": "US",
+    "ZIP_CODE": "32000",
+    "ESN": "100",
+    "STATUS": "ACTIVE",
+    "Site_NGUID": "ADR2@agency.example.org",
+    "DiscrpAgID": "agency.example.org",
+    "COMPARE": "ELM ST",
+    "St_Name": "ELM",
+    "St_PreDir": "",
+    "St_PosTyp": "STREET",
+    "St_PreTyp": "",
+    "St_PreMod": "",
+    "St_PosMod": "",
+    "St_PreSep": ""
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     200,
+     30
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "Add_Number": 121,
+    "PREFIX": "",
+    "STREET_NA": "ELM",
+    "TYPE": "ST",
+    "SUFFIX": "",
+    "UNIT": "",
+    "BLDG": "",
+    "ADDRESS": "121 ELM ST",
+    "HOUSE_NU": "121",
+    "CITY": "TESTVILLE",
+    "INC_MUNI": "TESTVILLE",
+    "STATE": "FL",
+    "COUNTY": "EXAMPLE",
+    "Country": "US",
+    "ZIP_CODE": "32000",
+    "ESN": "100",
+    "STATUS": "ACTIVE",
+    "Site_NGUID": "ADR3@agency.example.org",
+    "DiscrpAgID": "agency.example.org",
+    "COMPARE": "ELM ST",
+    "St_Name": "ELM",
+    "St_PreDir": "",
+    "St_PosTyp": "STREET",
+    "St_PreTyp": "",
+    "St_PreMod": "",
+    "St_PosMod": "",
+    "St_PreSep": ""
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     300,
+     30
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "Add_Number": 107,
+    "PREFIX": "",
+    "STREET_NA": "ELM",
+    "TYPE": "ST",
+    "SUFFIX": "",
+    "UNIT": "",
+    "BLDG": "",
+    "ADDRESS": "107 ELM ST",
+    "HOUSE_NU": "107",
+    "CITY": "TESTVILLE",
+    "INC_MUNI": "TESTVILLE",
+    "STATE": "FL",
+    "COUNTY": "EXAMPLE",
+    "Country": "US",
+    "ZIP_CODE": "32000",
+    "ESN": "100",
+    "STATUS": "ACTIVE",
+    "Site_NGUID": "ADR4@agency.example.org",
+    "DiscrpAgID": "agency.example.org",
+    "COMPARE": "ELM ST",
+    "St_Name": "ELM",
+    "St_PreDir": "",
+    "St_PosTyp": "STREET",
+    "St_PreTyp": "",
+    "St_PreMod": "",
+    "St_PosMod": "",
+    "St_PreSep": ""
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     400,
+     30
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "Add_Number": 109,
+    "PREFIX": "",
+    "STREET_NA": "ELM",
+    "TYPE": "ST",
+    "SUFFIX": "",
+    "UNIT": "",
+    "BLDG": "",
+    "ADDRESS": "109 ELM ST",
+    "HOUSE_NU": "109",
+    "CITY": "TESTVILLE",
+    "INC_MUNI": "TESTVILLE",
+    "STATE": "FL",
+    "COUNTY": "EXAMPLE",
+    "Country": "US",
+    "ZIP_CODE": "32000",
+    "ESN": "100",
+    "STATUS": "ACTIVE",
+    "Site_NGUID": "ADR5@agency.example.org",
+    "DiscrpAgID": "agency.example.org",
+    "COMPARE": "ELM ST",
+    "St_Name": "ELM",
+    "St_PreDir": "",
+    "St_PosTyp": "STREET",
+    "St_PreTyp": "",
+    "St_PreMod": "",
+    "St_PosMod": "",
+    "St_PreSep": ""
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     500,
+     30
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "Add_Number": 111,
+    "PREFIX": "",
+    "STREET_NA": "ELM",
+    "TYPE": "ST",
+    "SUFFIX": "",
+    "UNIT": "",
+    "BLDG": "",
+    "ADDRESS": "111 ELM ST",
+    "HOUSE_NU": "111",
+    "CITY": "TESTVILLE",
+    "INC_MUNI": "TESTVILLE",
+    "STATE": "FL",
+    "COUNTY": "EXAMPLE",
+    "Country": "US",
+    "ZIP_CODE": "32000",
+    "ESN": "100",
+    "STATUS": "ACTIVE",
+    "Site_NGUID": "ADR6@agency.example.org",
+    "DiscrpAgID": "agency.example.org",
+    "COMPARE": "ELM ST",
+    "St_Name": "ELM",
+    "St_PreDir": "",
+    "St_PosTyp": "STREET",
+    "St_PreTyp": "",
+    "St_PreMod": "",
+    "St_PosMod": "",
+    "St_PreSep": ""
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     600,
+     30
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "Add_Number": 105,
+    "PREFIX": "",
+    "STREET_NA": "ELM",
+    "TYPE": "ST",
+    "SUFFIX": "",
+    "UNIT": "",
+    "BLDG": "",
+    "ADDRESS": "105 ELM ST",
+    "HOUSE_NU": "105",
+    "CITY": "TESTVILLE",
+    "INC_MUNI": "TESTVILLE",
+    "STATE": "FL",
+    "COUNTY": "EXAMPLE",
+    "Country": "US",
+    "ZIP_CODE": "32000",
+    "ESN": "100",
+    "STATUS": "ACTIVE",
+    "Site_NGUID": "ADR7@agency.example.org",
+    "DiscrpAgID": "agency.example.org",
+    "COMPARE": "ELM ST",
+    "St_Name": "ELM",
+    "St_PreDir": "",
+    "St_PosTyp": "STREET",
+    "St_PreTyp": "",
+    "St_PreMod": "",
+    "St_PosMod": "",
+    "St_PreSep": ""
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     500,
+     800
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "Add_Number": 115,
+    "PREFIX": "",
+    "STREET_NA": "ELM",
+    "TYPE": "ST",
+    "SUFFIX": "",
+    "UNIT": "",
+    "BLDG": "",
+    "ADDRESS": "115 ELM ST",
+    "HOUSE_NU": "115",
+    "CITY": "TESTVILLE",
+    "INC_MUNI": "TESTVILLE",
+    "STATE": "FL",
+    "COUNTY": "EXAMPLE",
+    "Country": "US",
+    "ZIP_CODE": "32000",
+    "ESN": "100",
+    "STATUS": "ACTIVE",
+    "Site_NGUID": "ADR8@agency.example.org",
+    "DiscrpAgID": "agency.example.org",
+    "COMPARE": "ELM ST",
+    "St_Name": "ELM",
+    "St_PreDir": "",
+    "St_PosTyp": "STREET",
+    "St_PreTyp": "",
+    "St_PreMod": "",
+    "St_PosMod": "",
+    "St_PreSep": ""
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     500,
+     19000
+    ]
+   }
+  }
+ ]
+}

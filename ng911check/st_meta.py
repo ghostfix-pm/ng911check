@@ -71,12 +71,17 @@ def _worlds():
     names = frozenset({("TESTVILLE", "ELM ST")})
     far = S()
     line(far, (0.0, 0.0), (1000.0, 0.0))
+    spine = S()
+    line(spine, (0.0, 0.0), (1000.0, 0.0))
+    sequence = [A(Add_Number=n, HOUSE_NU=str(n), _XY=(x, 30.0))
+                for n, x in ((101, 100.0), (103, 200.0), (121, 300.0), (107, 400.0), (109, 500.0), (111, 600.0))]
     return [
         (list(POOL_A), list(POOL_S), dict(authoritative=names)),
         (list(POOL_A), list(POOL_S), dict(authoritative=None)),
         ([A()], [S(Parity_L="E")], dict(authoritative=None)),
         ([A(Add_Number=301, HOUSE_NU="301", _XY=(500.0, 2000.0))], [far], dict(authoritative=None)),
         ([A(DiscrpAgID="badagency")], [], dict(authoritative=None, expected_agid="badagency")),
+        (sequence, [spine], dict(authoritative=None)),
     ]
 
 

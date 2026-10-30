@@ -37,7 +37,17 @@ _THRESHOLDS = {
     "max_range_gap": ("max_range_gap", int),
     "distance_tolerance_ft": ("distance_tolerance_ft", float),
     "sync_threshold": ("sync_threshold", float),
+    "oo_min_displacement_ft": ("oo_min_displacement_ft", float),
+    "wb_min_margin_ft": ("wb_min_margin_ft", float),
+    "wb_min_ratio": ("wb_min_ratio", float),
+    "nm_min_margin_ft": ("nm_min_margin_ft", float),
+    "nm_min_ratio": ("nm_min_ratio", float),
 }
+
+# The smallest value the rangefit thresholds accept. A negative margin or a ratio below 1 would
+# report a point that sits on its own street, and XLAYER-19 skips its scan on the same bound.
+_FLOORS = {"oo_min_displacement_ft": 0.0, "wb_min_margin_ft": 0.0, "wb_min_ratio": 1.0,
+           "nm_min_margin_ft": 0.0, "nm_min_ratio": 1.0}
 _AGENCY = {"expected_agid": ("expected_agid", "str"),
            "strict_fqdn": ("strict_fqdn", "bool"),
            "expected_state": ("expected_state", "state"),
@@ -133,6 +143,9 @@ def load(path):
             raise ValueError("[thresholds] %s: expected %s, got %r" % (k, typ.__name__, v))
         if typ is float and not math.isfinite(val):
             raise ValueError("[thresholds] %s: must be a finite number, got %r" % (k, v))
+        if k in _FLOORS and val < _FLOORS[k]:
+            raise ValueError("[thresholds] %s: must be %s or more, got %r"
+                             % (k, _FLOORS[k], v))
         st.ctx_overrides[attr] = val
 
     for k, v in _items("agency"):
