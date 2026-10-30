@@ -94,11 +94,11 @@ class Tmp(object):
 
 def sections():
     """The test sections in run order. Imported late so --version never pays for them."""
-    from . import (st_addr, st_area, st_cli, st_cross, st_edge, st_geom, st_io, st_meta, st_msag,
+    from . import (st_addr, st_area, st_blind, st_cli, st_cross, st_edge, st_geom, st_io, st_meta, st_msag,
                    st_pins, st_range, st_street)
     return (st_addr.section, st_street.section, st_cross.section, st_area.section,
             st_msag.section, st_geom.section, st_io.section, st_cli.section, st_edge.section,
-            st_pins.section, st_range.section, st_meta.section)
+            st_pins.section, st_range.section, st_blind.section, st_meta.section)
 
 
 def run():

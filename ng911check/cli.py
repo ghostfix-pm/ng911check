@@ -15,7 +15,7 @@ import traceback
 from . import __version__, catalog, engine, msag, reader, report, settings as settings_mod
 from . import response_area_checks as ra
 from .crosswalks import load_crosswalks, load_domain_csv
-from .geometry import UNITS, Frame
+from .geometry import UNITS, Frame, fits_degrees
 
 EXIT_OK, EXIT_ERRORS, EXIT_INPUT, EXIT_USAGE, EXIT_CRASH = 0, 1, 2, 64, 70
 KPI_NAMES = ("MSAG match-rate KPI", "MSAG exact-tuple KPI", "MSAG source age")
@@ -27,6 +27,28 @@ class _Parser(argparse.ArgumentParser):
         self.print_usage(sys.stderr)
         sys.stderr.write("%s: error: %s\n" % (self.prog, message))
         raise SystemExit(EXIT_USAGE)
+
+
+def _count(text):
+    """An argparse type: a whole number of zero or more."""
+    try:
+        value = int(text)
+    except ValueError:
+        value = -1
+    if value < 0:
+        raise argparse.ArgumentTypeError("%r is not a number of zero or more" % text)
+    return value
+
+
+def _tolerate_encoding(*streams):
+    """Make a console stream print a character its code page lacks as a backslash escape.
+
+    Without this a Windows console on a legacy code page raises on the first such
+    character, and the report and any --out file are lost."""
+    for stream in streams:
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(errors="backslashreplace")
 
 
 def build_parser():
@@ -61,7 +83,7 @@ def build_parser():
     ap.add_argument("--street-names", dest="street_names", metavar="CSV",
                     help="an authoritative street-name list for STREET-11")
     ap.add_argument("--optional", action="store_true", help="also run the opt-in checks")
-    ap.add_argument("--show", type=int, default=20, metavar="N",
+    ap.add_argument("--show", type=_count, default=20, metavar="N",
                     help="findings to print (default 20)")
     ap.add_argument("--format", choices=("csv", "json"), default="csv",
                     help="format of the --out file (default csv)")
@@ -78,9 +100,16 @@ def build_parser():
 
 
 def _same_file(a, b):
-    def norm(p):
-        return os.path.normcase(os.path.realpath(os.path.abspath(p)))
-    return norm(a) == norm(b)
+    """True when both names reach one file.
+
+    samefile compares file identity, so it sees through a hard link, an 8.3 short name and a
+    long-path prefix. A name that does not exist yet falls back to a resolved-path comparison."""
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        def norm(p):
+            return os.path.normcase(os.path.realpath(os.path.abspath(p)))
+        return norm(a) == norm(b)
 
 
 def _write_atomic(path, text):
@@ -95,6 +124,9 @@ def _msag_config(args):
         cfg = msag.load_config(args.msag_config)
         if args.msag:
             cfg.source_path = args.msag
+        elif not cfg.source_path:
+            raise ValueError("%s names no source_path and --msag was not given, so there is no "
+                             "MSAG file to read" % args.msag_config)
     elif args.msag:
         cfg = msag.MsagConfig(source_path=args.msag)
     else:
@@ -163,8 +195,9 @@ def _read_inputs(args):
 
 
 def _clash(out, paths):
-    """True when the --out file is one of the input files."""
-    return bool(out) and any(p and _same_file(out, p) for p in paths)
+    """True when the --out file, or the OUT.tmp that --apply writes first, is one of the input files."""
+    return bool(out) and any(p and _same_file(target, p) for target in (out, out + ".tmp")
+                             for p in paths)
 
 
 def run(args):
@@ -192,6 +225,10 @@ def run(args):
     addresses = layers["addresses"].rows if "addresses" in layers else []
     streets = layers["streets"].rows if "streets" in layers else []
     notices = []
+    if args.units != "degrees" and fits_degrees(coords):
+        notices.append("Every coordinate fits longitude -180..180 and latitude -90..90, yet "
+                       "--units is %s. If the files hold longitude and latitude, rerun with "
+                       "--units degrees; until then every distance is wrong." % args.units)
     for name, layer in layers.items():
         gone = layer.missing_columns()
         if gone:
@@ -239,6 +276,7 @@ def run(args):
 
 
 def main(argv=None):
+    _tolerate_encoding(sys.stdout, sys.stderr)
     ap = build_parser()
     args = ap.parse_args(argv)
     if args.version:

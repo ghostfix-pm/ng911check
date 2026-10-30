@@ -65,7 +65,7 @@ def section(h):
     c(found(r, "XLAYER-04", "ERROR", "no centerline named 'ELMWOOD ST'") == 1, "an ignored name does not hide the routing ERROR of a longer name  <-- pinned defect")
 
     # ---- GeoJSON values
-    row = {"COUNTY": 12083.0, "ZIP_CODE": 1.5, "STATE": 12, "Add_Number": 7, "CITY": None, "ESN": "100"}
+    row = {"COUNTY": 99999.0, "ZIP_CODE": 1.5, "STATE": 77, "Add_Number": 7, "CITY": None, "ESN": "100"}
     reader._plain_values(row, "addresses", "where")
-    c(row == {"COUNTY": "12083", "ZIP_CODE": "1.5", "STATE": "12", "Add_Number": 7, "CITY": None, "ESN": "100"},
+    c(row == {"COUNTY": "99999", "ZIP_CODE": "1.5", "STATE": "77", "Add_Number": 7, "CITY": None, "ESN": "100"},
       "a GeoJSON number in a text column becomes the text a CSV would hold and a numeric column keeps its number")

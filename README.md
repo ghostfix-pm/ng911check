@@ -67,6 +67,7 @@ Findings: 3 ERROR, 0 WARNING, 2 INFO
   XLAYER-01          ERROR    2
   ADDR-05            INFO     1
   STREET-11          INFO     1
+Notices: 7. Read them: a check that was skipped, or that left rows out, did not judge all of the data, and zero findings from it is not a clean result.
 
 First 5 finding(s), most severe first:
   ERROR   ADDR-05    address row 2: ESN 'ABC' not a valid 1-5 digit ESN
@@ -79,8 +80,9 @@ $ echo $?
 ```
 
 The invalid ESN is still an ERROR and the run exits 1. The retired point became INFO, as asked.
-The `XLAYER-14` line is marked as having no effect before the run starts. Without the override file
-the same data gives `3 ERROR, 1 WARNING, 1 INFO`.
+The `XLAYER-14` line is marked as having no effect before the run starts. Pass `--agency agency.example.org`
+in place of `--settings demo/tuned.ini` and the same data gives `3 ERROR, 1 WARNING, 1 INFO`. With neither
+flag the run exits 2, because no agency is named.
 
 ## What you get
 
@@ -137,31 +139,38 @@ PASS  street-14 skips a closed loop, which meets its feeder head-to-head whichev
 ...
 PASS  a GeoJSON run reports STREET-14, XLAYER-17, XLAYER-18 and XLAYER-19 on the rows that hold the defects
 ...
+PASS  a correct address on a street whose segments share SEGMENT_ID '' is not flagged  <-- pinned defect
+...
+PASS  an address file with no X and Y columns says the three checks judged nothing, not a clean pass  <-- pinned defect
+...
+PASS  an MSAG config error is exit 2 and reads: quoted.json: max_source_age_days must be a whole number of days, or null  <-- pinned defect
+...
 --------------------------------------------------------------------
-798 assertions, 0 failed
+883 assertions, 0 failed
 ```
 
-The full run prints all 798 assertions. Each `...` line above is where the block is cut.
+The full run prints all 883 assertions. Each `...` line above is where the block is cut.
 `python -m ng911check --self-test` exits 0 when every assertion passes and 1 when one fails.
 
 | Host | Python | Assertions |
 |---|---|---|
-| Windows | 3.13.2 | 798 assertions, 0 failed |
-| Windows | 3.12.10 | 798 assertions, 0 failed |
-| Windows | 3.11.8 | 798 assertions, 0 failed |
-| Ubuntu | 3.12.3 | 798 assertions, 0 failed |
+| Windows | 3.13.2 | 883 assertions, 0 failed |
+| Windows | 3.12.10 | 883 assertions, 0 failed |
+| Windows | 3.11.15 | 883 assertions, 0 failed |
+| Windows | 3.10.20 | 883 assertions, 0 failed |
+| Windows | 3.9.25 | 883 assertions, 0 failed |
+| Ubuntu | 3.12.3 | 883 assertions, 0 failed |
 
-I had no Python 3.9 interpreter on the Windows machine for this release, so the 3.9 row of the
-earlier table is gone. The self-test parses every source file with `feature_version=(3, 9)` and fails
-on an f-string, but that is not a run on 3.9.
+The Windows 3.9, 3.10 and 3.11 rows run on uv-managed builds of CPython. The self-test also parses
+every source file with `feature_version=(3, 9)` and fails on an f-string. The Ubuntu row is 3.12.3 only.
 
 The counts are equal on every host because the self-test never branches on the platform. It writes
 its files to a temporary folder and removes the folder at the end.
 
-`coverage run --branch -m ng911check --self-test` reports 100 percent of statements and branches
-for the whole package, the test modules included. One line carries a `pragma: no branch`. It is the
-loop in `Polyline.midpoint` in `geometry.py`. That loop never ends normally, because its last
-segment always returns. Branch coverage cannot see that.
+`coverage run --branch -m ng911check --self-test` (coverage 7.16.1) reports 100 percent of 4946
+statements and 1472 branches for the whole package, the test modules included. One line carries a
+`pragma: no branch`. It is the loop in `Polyline.midpoint` in `geometry.py`. That loop never ends
+normally, because its last segment always returns. Branch coverage cannot see that.
 
 ## What already exists
 
@@ -173,18 +182,28 @@ Other open tools check NG9-1-1 data. Use them if one fits better.
   tables and does not convert or submit anything.
 - [dolin5/NG911-Scripts](https://github.com/dolin5/NG911-Scripts) is a small set of ArcPy scripts
   under the MIT licence. They find overlapping road ranges, list MSAG and centerline differences
-  and sync MSAG with structures. Its README says the MSAG script did not yet use the ESN. The
-  repository was last pushed in 2017.
+  and sync MSAG with structures. Its README says the MSAG script "currently does not factor in ESN".
+  The repository was last pushed in 2017.
+- [dolin5/gallatin-ng911-checker](https://github.com/dolin5/gallatin-ng911-checker) is a TypeScript
+  web app built on the ArcGIS API for JavaScript 4.11 type definitions, by the same author. It was last
+  pushed on 2022-12-11. It has no description and no licence, and its README is the text of a webpack
+  sample, so I cannot say which checks it runs. I did not read its source.
 - [Nsokol44/ng911-spatial-qa](https://github.com/Nsokol44/ng911-spatial-qa) runs five spatial
   checks on site-address points against centerlines: name agreement, range parity, distance,
   uniqueness and consistency across a county line. It is under the MIT licence. It uses a 45 m
   search window around each point, which this tool does not.
 - [A-Charvin/Fishbone-QA-911](https://github.com/A-Charvin/Fishbone-QA-911) is an ArcGIS Pro tool
   that draws a line from each address point to its road segment, so a person sees the mismatches
-  on a map. It needs ArcGIS Pro. It is the closest tool to XLAYER-18 that I found, and the map
-  view is something this tool does not have.
+  on a map. Its description says it validates address points against road segment address ranges.
+  It needs ArcGIS Pro, and GitHub lists no licence for it. It is the closest tool to XLAYER-18 that I
+  found, and the map view is something this tool does not have.
 - [A-Charvin/Parity-QA-911](https://github.com/A-Charvin/Parity-QA-911) derives and validates the
   left and right address parity of a centerline. It is under the MIT licence and needs ArcGIS Pro.
+- Four more repositories came up for `ng911`: eneemann/NG911 (scripts to help with and build NG911
+  data, no licence listed), geohippie/NG911 (scripts and files for NG911, no licence listed),
+  Washington-County-GIS/NG911 (Arcade attribute rules and other scripts, GPL-3.0) and
+  northrivergeo/tn_ng911_database (a Tennessee 911 database for QGIS and PostGIS, GPL-2.0). I read
+  only their descriptions.
 - The NENA GIS data model templates at
   [NENA911/NG911GISDataModel](https://github.com/NENA911/NG911GISDataModel) define the schema that
   most of these tools check against.
@@ -194,12 +213,15 @@ the effect of every override. It reports the exact-tuple rate and the file age b
 match rate. It generates its own check catalog from the code and fails when the two disagree. It
 does not replace a state submission tool, and it does not edit your data.
 
-A search of GitHub with `gh search repos` found these repositories and others that were not
-relevant. It found no repository named `ng911check` except this one. The searches `ng911`,
-`ng911 qa`, `centerline address range`, `street centerline direction` and `geocode centerline` were
-run on 2026-10-30. I read only the repository descriptions for Fishbone-QA-911 and Parity-QA-911, not
-their code. I cannot say whether either one checks the order of numbers along a street, or the
-direction of a line. The search shows only that I found nothing more.
+A search of GitHub with `gh search repos` on 2026-10-30 found the repositories above. The query
+`ng911check` found only this one. The queries `ng911` and `rangefit` returned the NG9-1-1 repositories
+named here, other repositories about call handling, a pentest framework and a capstone project, and four
+unrelated fitness projects. The queries `ng911 qa`, `ng911 spatial`, `centerline address range`,
+`street centerline direction`, `geocode centerline`, `gallatin ng911 checker`, `ng911 address range`
+and `ng911 address point qa` returned nothing, although the Nsokol44, Fishbone and Parity repositories
+exist (I confirmed each by name). A multi-word search therefore proves little. I read only the
+repository descriptions for Fishbone-QA-911 and Parity-QA-911, not their code. I cannot say whether
+either one checks the order of numbers along a street, or the direction of a line.
 
 ## Quick start
 
@@ -244,7 +266,7 @@ python -m ng911check --catalog-check README.md
 | `--msag-exceptions CSV` | none | MSAG records to leave out of the match rate. See The MSAG numbers. |
 | `--street-names CSV` | none | An authoritative street-name list for STREET-11. |
 | `--optional` | off | Also run the checks that are off by default. |
-| `--show N` | `20` | How many findings to print. |
+| `--show N` | `20` | How many findings to print. A whole number of zero or more; a negative value exits 64. |
 | `--format` | `csv` | Format of the `--out` file: `csv` or `json`. |
 | `--out FILE` | none | Where to write every finding. Nothing is written without `--apply`. |
 | `--apply` | off | Write the `--out` file. It needs `--out`. |
@@ -257,7 +279,9 @@ Every flag must be spelled in full. The parser sets `allow_abbrev=False`. A pref
 is refused with exit 64 instead of being read as `--apply`, and the self-test pins that for
 `--ap`, `--app`, `--appl` and for `--ou`. Nothing else may write. `--out` is refused when it names
 any file the run reads: a file named on the command line, a polygon file named in the settings, or a
-file named in the MSAG config. The refused run leaves that file as it was.
+file named in the MSAG config. It is also refused when `OUT.tmp`, the file `--apply` writes first, is
+one of those files. The guard compares file identity, so a hard link to an input is caught. The refused
+run leaves that file as it was.
 
 Exit codes: 0 no ERROR finding, 1 at least one ERROR after the overrides, 2 an input or settings
 file was refused or could not be read, 64 usage error, 70 an unexpected crash. A crash never
@@ -304,7 +328,7 @@ easting and northing, precisely in that order". Streets with geometry turn on XL
 XLAYER-05 also needs `--optional` or `[checks] XLAYER-05 = on`.
 
 A GeoJSON property may be a string, a number or null. A number in a text column is read as the
-text a CSV would hold, so `"COUNTY": 12083` reads as `12083`. A list, an object or `true` or `false`
+text a CSV would hold, so `"COUNTY": 99999` reads as `99999`. A list, an object or `true` or `false`
 refuses the file with exit 2. A header-only CSV, or a `FeatureCollection` with no features, also
 refuses the file with exit 2. An empty export would otherwise pass as clean.
 
@@ -314,11 +338,19 @@ unused. A row is numbered by its position in the file, and findings quote that r
 
 Degrees are converted to planar feet around the centre of the data. Over the few miles a county
 spans the result is good to about half a percent against the WGS 84 ellipsoid. The self-test checks
-this at 29 degrees north against the series for the length of a degree on the
-[Geographic coordinate system](https://en.wikipedia.org/wiki/Geographic_coordinate_system) page. It
-is a plausibility measure, not a survey measure. A layer in feet or meters is exact. Coordinates that
-cannot be degrees are refused unless you pass `--units`. The meter uses the international foot of
-exactly 0.3048 m ([NIST SP 811, appendix B.8](https://www.nist.gov/pml/special-publication-811/nist-guide-si-appendix-b-conversion-factors/nist-guide-si-appendix-b8)).
+this at 29 degrees north against the series for the length of a degree on the [Geographic coordinate
+system](https://en.wikipedia.org/wiki/Geographic_coordinate_system) page. It is a plausibility
+measure, not a survey measure. A layer in feet or meters is exact. Coordinates that cannot be
+degrees are refused unless you pass `--units`. The reverse is a notice only: when every coordinate
+in a feet or meters run fits longitude -180 to 180 and latitude -90 to 90, the report says the files
+may be degrees. In a degrees run a position of 0, 0 counts as no position, because it is the usual
+stand-in for a missing one, and it does not move the centre of the frame. A street vertex at 0, 0
+refuses the file. A GeoJSON `crs` member is ignored. A layer in Web Mercator metres (EPSG:3857)
+passed with `--units meters` inflates every distance by 1/cos(latitude), about 14 percent near 29
+degrees north, because the scale factor of the [Mercator
+projection](https://en.wikipedia.org/wiki/Mercator_projection) is the secant of the latitude. The
+meter uses the international foot of exactly 0.3048 m ([NIST SP 811, appendix
+B.8](https://www.nist.gov/pml/special-publication-811/nist-guide-si-appendix-b-conversion-factors/nist-guide-si-appendix-b8)).
 
 ## Settings
 
@@ -368,11 +400,13 @@ adds more records, through `--msag-exceptions`. Its header is
 every ESN when `esn` is blank. A `permanent` row leaves one community, street and ESN out. The
 street-name list of `--street-names` has the header `community,street_name`.
 
-The `--msag-config` file is JSON. A key you leave out takes its default. An unknown key refuses the file.
+The `--msag-config` file is JSON. A key you leave out takes its default. An unknown key refuses the
+file. So does a value of the wrong type, a `min_match_rate` outside 0 to 1, and a file that is not a
+JSON object: exit 2, and the message names the file and the key.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `source_path` | none | The MSAG CSV. A relative path starts at the folder of the config file. |
+| `source_path` | none | The MSAG CSV. A relative path starts at the folder of the config file. Without it, pass `--msag`. |
 | `header_row` | `0` | The 1-based header row. `0` finds it by its column names. |
 | `field_map` | `PREFIX`, `STREET NAME`, `TYPE`, `SUFFIX`, `LOW`, `HIGH`, `COMMUNITY`, `SIDE`, `ESN` | Maps `prefix`, `street_name`, `type`, `suffix`, `low`, `high`, `community`, `parity` and `esn` to your column names. |
 | `esn_pad_width` | `3` | ESNs are zero-padded to this width before they are compared. |
@@ -380,7 +414,7 @@ The `--msag-config` file is JSON. A key you leave out takes its default. An unkn
 | `names_path` | none | The street-name CSV. |
 | `min_match_rate` | `0.98` | The floor, as a fraction. |
 | `max_source_age_days` | none | An older MSAG file is a WARNING. Without it the age is only reported. |
-| `source_hash` | none | A SHA-256. A file that no longer hashes to it refuses the run with exit 2. |
+| `source_hash` | none | A SHA-256 in any case. A file that no longer hashes to it refuses the run with exit 2. |
 
 The report also prints a roll-up by street, so one thousand findings on forty streets read as forty
 rows. Three more WARNINGS refuse to let a rate stand alone: no eligible record at all, a record
@@ -422,13 +456,21 @@ they need the line.
 
 Each of the four reads positions only. None edits a point or a line.
 
+An address with no position, and a street segment that has an address range but no line, drop out of
+these checks. The run prints a NOTICE with the counts, for example `XLAYER-17, XLAYER-18 and XLAYER-19 left
+out 1 of 2 addresses that have no position`, and a `Notices:` line under the finding counts. When no
+address has a position, the notice says the checks judged no address. A run without `--addresses` skips
+XLAYER-17, XLAYER-18 and XLAYER-19, and a street file in CSV form skips all four. The exit code does not
+change in any of these cases, so read the notices before you trust a zero.
+
 **XLAYER-18.** The covering segment is the same-name segment whose range and parity contain the
 number. The nearest other segment is the nearest same-name segment that does not. The check reports
 a point when the covering segment is more than `wb_min_margin_ft` farther away and at least
 `wb_min_ratio` times as far. A number that no segment covers is XLAYER-02, not this check.
 
 **XLAYER-17.** Each point joins its nearest same-name line and the left or right side of it. A point
-whose nearest spot is a line end has no side and is left out. Points that share a number, a complex,
+whose nearest spot is a line end has no side and is left out, and so is a point within half a foot of the
+line, which is on neither side. Points that share a number, a complex,
 count as one position, at the mean of their distances along the line. A side needs four positions.
 The direction of the numbering comes from the numbers: a Spearman rank correlation of 0.5 or more,
 or -0.5 or less, between the order along the line and the order of the numbers. A side without a
@@ -479,30 +521,34 @@ Findings: 0 ERROR, 4 WARNING, 4 INFO
   XLAYER-19          WARNING  1
   STREET-11          INFO     1
   XLAYER-14          INFO     3
+Notices: 2. Read them: a check that was skipped, or that left rows out, did not judge all of the data, and zero findings from it is not a clean result.
 
 First 4 finding(s), most severe first:
   WARNING STREET-14  street row 1: SEG 1 and SEG 3 of 'ELM ST' meet head-to-head, so one is drawn against the street
   WARNING XLAYER-17  address row 3: house number 121 is out of sequence on the left side of SEG 1: its neighbours are 103 and 107, and it sits 300 ft from where its number belongs
   WARNING XLAYER-18  address row 7: house number 105 is 800 ft from SEG 1, whose range covers it, and 100 ft from SEG 2, whose range does not
   WARNING XLAYER-19  address row 8: house number 115 on 'ELM ST' is 18100 ft from its street (SEG 2) and 1000 ft from 'OAK AVE' (SEG 4)
+  ... 4 more. Write them all with --out FILE --apply.
 $ echo $?
 0
 ```
 
 All four are WARNING findings, so the run exits 0. A `[severity]` line may raise one to ERROR.
 
-What the self-test exercises. It builds each case as rows and lines in feet. It pins the boundary
-of every threshold: a gap equal to the margin is not reported, a ratio exactly at the limit is
-reported, and a displacement exactly at the limit is kept. It runs the four checks end to end from
-two GeoJSON files through the reader and the command line. It also runs a street file with no
-geometry, which skips all four checks with a notice. The checks have no network path, so no local
-`http.server` stub applies.
+What the self-test exercises. It builds each case as rows and lines in feet. The level lines of the
+first cases start at the origin, so a second group uses a due-north line, a sloped line, a bent line and
+lines far from the origin, where a sign slip in the line arithmetic changes the verdict. It pins the
+boundary of each of the five settings keys: a gap equal to the margin is not reported, a ratio exactly at
+the limit is reported, and a displacement exactly at the limit is kept. It also pins the fixed limits in
+`rangefit.py`: the one-foot join tolerance of STREET-14 along and across the line, a loop that closes at
+exactly a foot, ranges that touch at one number, the rank correlation of 0.5, and the half-foot margin
+from a line end and from the line itself. It runs the four checks end to end from two GeoJSON files
+through the reader and the command line. It also runs a street file with no geometry, which skips all
+four checks with a notice, an address file with no positions, and a street with a null geometry. The
+checks have no network path, so no local `http.server` stub applies.
 
-I also changed 36 operators and boundaries in the new code by hand and re-ran the self-test. The
-first run failed for 30 of them and left 6 alive. I added cases for three of the survivors, and they
-now fail. One survivor was a filter in XLAYER-19 that changed no verdict, so I removed it. Two
-survivors are in the early skip of XLAYER-19, which only saves time, so no assertion can pin them.
-The mutation script is not part of the repository.
+No mutation-testing script ships with the package. The evidence for the self-test is its branch coverage
+and its labels marked `pinned defect`, not a mutation score.
 
 ## The check catalog
 
@@ -560,18 +606,21 @@ what a check needs from the run. A check that does not get it is skipped, and th
 | XLAYER-14 | street | INFO | yes | addresses | Report a street segment that has an address range but no address point inside it. |
 | XLAYER-15 | both | WARNING | yes | modifier domains | Flag a modifier or separator value that is not in the supplied domain. |
 | XLAYER-16 | both | WARNING, ERROR, INFO | no | msag | Compare the MSAG with the GIS ranges and report coverage, exact-tuple rate, differences and file age. |
-| XLAYER-17 | address | WARNING | yes | geometry | Flag an address whose house number is out of order with its neighbours along its street. |
-| XLAYER-18 | address | WARNING | yes | geometry | Flag an address that sits clearly nearer a block of its street whose range excludes its number. |
-| XLAYER-19 | address | WARNING | yes | geometry | Flag an address that sits clearly nearer a ranged street of another name than its own street. |
+| XLAYER-17 | address | WARNING | yes | addresses, geometry | Flag an address whose house number is out of order with its neighbours along its street. |
+| XLAYER-18 | address | WARNING | yes | addresses, geometry | Flag an address that sits clearly nearer a block of its street whose range excludes its number. |
+| XLAYER-19 | address | WARNING | yes | addresses, geometry | Flag an address that sits clearly nearer a ranged street of another name than its own street. |
 <!-- catalog:end -->
 
 ## What was verified against documentation
 
 This package relies on no Esri, SQL Server, PROJ, FEMA or Census behaviour. It never imports
-`arcpy`. It relies on these published facts, each read on the day it was written.
+`arcpy`. It relies on these published facts.
 
-- USPS Publication 28: section 233 lists the directionals, and Appendix C1 lists the street suffix
-  abbreviations. The built-in tables come from those two. No vendor or agency domain file ships.
+- [USPS Publication 28](https://pe.usps.com/text/pub28/welcome.htm):
+  [section 233](https://pe.usps.com/text/pub28/28c2_014.htm) lists the directionals, and
+  [Appendix C1](https://pe.usps.com/text/pub28/28apc_002.htm) lists the street suffix abbreviations.
+  I confirmed on 2026-10-30 that both pages exist with those titles. I did not compare the tables line
+  by line. The built-in tables come from those two. No vendor or agency domain file ships.
   The self-test fails when the package folder holds any file that is not Python.
 - RFC 7946 section 3.1.1, quoted above, for the coordinate order. Section 3.1.4 says a `LineString` is
   "an array of two or more positions". The RFC attaches no meaning to the direction of a line, so
@@ -627,25 +676,30 @@ ESN rule in ADDR-05, one to five digits and not zero, is also a local choice.
 - An MSAG with no eligible record, because every record is excepted or the file has no data rows, prints a 100 percent rate over 0 records. Only a WARNING says that nothing was compared, so the run exits 0.
 - The MSAG source age comes from the file modification time. A freshly copied or downloaded MSAG reads as 0 days old.
 - A non-numeric MSAG `LOW` or `HIGH` value, for example `1,000` or `1O1`, is read as blank. The record then shows up as `gap-with-no-address`, and the report never names the real cause.
-- The MSAG config values are not checked for type or range. A `min_match_rate` of 98 instead of 0.98 prints a floor of 9800 percent and always says `BELOW FLOOR`. A quoted number such as `"max_source_age_days": "30"` stops the run with a traceback and exit 70.
-- The MSAG config JSON is read as plain UTF-8. A file saved with a byte order mark is refused with exit 2, and the message does not name the file.
 - A CSV that is not UTF-8, for example Windows-1252 or the UTF-16 "Unicode text" format of Excel, is refused with exit 2. The message does not name the file or say to save it as UTF-8.
-- When the report is piped or redirected on Windows, a character outside Windows-1252 in the data, such as a zero-width space, makes the print fail. The run then exits 2 as if an input could not be read, and the report and any `--out` file are lost.
 - The `--out` CSV writes input values as they are. A `Site_NGUID` that starts with `=`, `+`, `-` or `@` is a formula when a spreadsheet opens the findings file. Open the file as text.
 - Column names are matched with their exact case. A file with lowercase headers gets a missing-column notice and many blank-field errors, such as `DiscrpAgID None invalid`, instead of one clear message.
 - A CSV row with more cells than the header is read with the extra cells dropped, and no notice is printed. An unquoted comma inside a value hides the shift, so quote values that contain commas.
-- Rows without a geometry, a GeoJSON feature with null geometry or a CSV row without X and Y, are left out of the distance and side checks, and the report does not count them. The response-area checks call such a row `not inside any` polygon.
-- CSV points at X=0 and Y=0 count as real locations. In a degrees run they move the centre of the planar frame and skew every distance, so remove them first.
-- `--units feet` over data that is really degrees, and swapped longitude and latitude inside the degree range, cannot be detected.
+- Rows without a geometry, a GeoJSON feature with null geometry or a CSV row without X and Y, are left out of the distance and side checks. XLAYER-17, XLAYER-18, XLAYER-19 and STREET-14 count them in a notice. The other checks do not count them, and the response-area checks call such a row `not inside any` polygon.
+- In a feet or meters run, a position of 0, 0 is a real position. In a degrees run any other stand-in value that lies inside the degree range, such as -1, -1, is read as a real position.
+- Swapped longitude and latitude inside the degree range cannot be detected. The run gives no error and no notice.
 - An address far from its street is reported at INFO by XLAYER-05 when its number falls inside a range of a same-name segment. INFO never changes the exit code, even with `--optional`.
 - The degraded STREET-11 notice also prints when no street file is given.
 - The response-area roll-up still prints when the area check is switched off with `[checks]`. A finding names a column the file lacks as `'None'`, for example `ONEWAY 'None' not a recognized value`.
 - ADDR-08 says `missing house number` for an alphanumeric number such as `12A`. The number is present but not numeric.
-- `--show` takes a non-negative number. A negative value drops that many findings from the end of the printed list.
-- With `--apply` the tool writes `OUT.tmp` first and then renames it onto `OUT`. Do not keep another file under that name. A failed rename, for example `--out` naming a folder, leaves `OUT.tmp` behind.
-- The `--out` guard compares resolved paths, not file identity. A symbolic link or a different case on Windows is caught. A hard link to an input file is not, but the tool replaces the name and leaves the input's own content as it was.
-- `msag.save_config` writes a file without `--apply`. No command line path calls it, and only the self-test does.
+- With `--apply` the tool writes `OUT.tmp` first and then renames it onto `OUT`. An input file named `OUT.tmp` is refused. Any other file under that name is overwritten without warning. A failed rename, for example `--out` naming a folder, leaves `OUT.tmp` behind.
+- The `--out` guard compares file identity for names that exist and resolved paths for a name that does not exist yet. A hard link, a symbolic link and a different case on Windows are caught. An 8.3 short name and a long-path prefix (the `?` form) are not exercised: the volume I tested on has no short names, and the prefix works on Windows only.
 - The Earth radius and the length of a degree are cited to Wikipedia pages, not to an official source such as IUGG or NIMA TR8350.2.
+- XLAYER-17 does not report two adjacent mis-numbered houses, because each one's neighbour disagrees with the direction. In the numbers 101, 103, 105, 107, 121, 125, 109, 111, 113, 115 it gives no finding, and with 125 removed it reports 121, when the houses are 100 ft apart and the displacement limit is 0.
+- XLAYER-17 never reports the first or the last house on a side. A number out of order by less than `oo_min_displacement_ft` (default 150 ft) is also kept quiet.
+- XLAYER-17 leaves out a point within half a foot of the centerline, so a layer of points snapped onto the line gets no XLAYER-17 verdict at all.
+- XLAYER-19 reports nothing for a point whose street name matches no segment in the street layer, because it has no own street to measure. XLAYER-04 is the check for that case.
+- XLAYER-18 and XLAYER-19 test every same-name or ranged segment for every point, so a layer with hundreds of thousands of points and thousands of segments of one street name runs for a long time.
+- A street file in CSV form skips the four range fit checks and the run can still exit 0. The report says so in NOTICE lines and in the `Notices:` line.
+- The `--out` CSV holds findings only. The notices appear in the console report and in a `--format json` file, so a CSV from a run that skipped checks looks the same as a clean one.
+- Exit code 1 means an ERROR finding, and it also means the self-test failed or the catalog block is out of date. Do not use the code alone to tell a finding from a tool fault outside a normal run.
+- A path in a settings `[areas]` line or in the MSAG config is opened as written, so a UNC path makes Windows contact that host. Use settings and config files you wrote yourself.
+- A few one-operator changes to the range fit code cannot be pinned because they change no verdict: the early skip in XLAYER-19, the initial value of the rank list, `<` against `<=` between numbers that all differ, and the sign constants.
 
 ## Related
 

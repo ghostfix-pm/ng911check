@@ -87,6 +87,10 @@ def format_text(records, notices, settings_lines, tally_lines, input_lines, roll
         c[SEVERITY.ERROR], c[SEVERITY.WARNING], c[SEVERITY.INFO]))
     for cid, sev, n in by_check(records):
         out.append("  %-18s %-8s %d" % (cid, sev, n))
+    if notices:
+        out.append("Notices: %d. Read them: a check that was skipped, or that left rows out, did "
+                   "not judge all of the data, and zero findings from it is not a clean result."
+                   % len(notices))
     for title, lines in rollups:
         out.append("")
         out.append(title)

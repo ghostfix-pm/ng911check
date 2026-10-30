@@ -21,7 +21,7 @@ import math
 import os
 
 from .common import addr_name_key, street_name_key
-from .geometry import Polyline, point_in_polygon
+from .geometry import NULL_ISLAND, Polyline, point_in_polygon
 
 ADDRESS_COLUMNS = (
     "Add_Number", "PREFIX", "STREET_NA", "TYPE", "SUFFIX", "UNIT", "BLDG", "ADDRESS",
@@ -129,10 +129,18 @@ def _plain_values(row, name, where):
             row[key] = "%d" % value if float(value).is_integer() else repr(value)
 
 
+def _finite(v):
+    """A JSON number that is finite as a float. A huge integer, 10**400, is not."""
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return False
+    try:
+        return math.isfinite(v)
+    except OverflowError:
+        return False
+
+
 def _pair(pos, where):
-    ok = (isinstance(pos, list) and len(pos) >= 2
-          and all(isinstance(v, (int, float)) and not isinstance(v, bool)
-                  and math.isfinite(v) for v in pos[:2]))
+    ok = isinstance(pos, list) and len(pos) >= 2 and all(_finite(v) for v in pos[:2])
     if not ok:
         _fail(where, "a position must be [x, y] with two finite numbers, got %r" % (pos,))
     return (float(pos[0]), float(pos[1]))
@@ -217,7 +225,7 @@ def _read_geojson(path, name, renames):
         else:
             _fail(where, "a %s layer cannot hold a %s geometry (addresses take Point, "
                   "streets take LineString or MultiLineString)" % (name, kind))
-        if index in lines and any(len(part) < 2 for part in lines[index]):
+        if index in lines and (not lines[index] or any(len(part) < 2 for part in lines[index])):
             _fail(where, "a line part needs at least two positions")
         row["_RAW"] = raw
         _finish_row(row, name, index, where)
@@ -276,10 +284,16 @@ def read_areas(path, key_prop):
 def finalize_layer(layer, frame):
     """Give every row its _XY in planar feet and return {oid: Polyline} for the layer."""
     geoms = {}
+    degrees = frame.units == "degrees"
     for oid, parts in layer.lines.items():
+        if degrees and any(p == NULL_ISLAND for part in parts for p in part):
+            _fail("%s feature %d" % (layer.path, oid), "a street vertex is at 0, 0, which is not "
+                  "a position in a degrees file. Remove or fix the vertex.")
         geoms[oid] = Polyline([[frame.forward(x, y) for x, y in part] for part in parts])
     for row in layer.rows:
         raw = row.pop("_RAW")
+        if degrees and raw == NULL_ISLAND:
+            raw = None
         if row["_OID"] in geoms:
             row["_XY"] = geoms[row["_OID"]].midpoint()
         elif raw is not None:

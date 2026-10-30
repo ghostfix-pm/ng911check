@@ -68,6 +68,8 @@ def section(h):
         # ---- the hash pin and the age
         pinned = msag.MsagConfig(source_path=path, source_hash=msag.file_hash(path))
         c(len(msag.load_msag_csv(pinned)) == 3, "a source that hashes to the pinned value loads")
+        shouted = msag.MsagConfig(source_path=path, source_hash=" " + msag.file_hash(path).upper() + " ")
+        c(len(msag.load_msag_csv(shouted)) == 3, "a pinned hash in upper case, as Get-FileHash prints it, matches  <-- pinned defect")
         raises(lambda: msag.load_msag_csv(msag.MsagConfig(source_path=path, source_hash="0" * 64)),
                "a source that no longer hashes to the pinned value is refused  <-- pinned defect")
         mtime = os.path.getmtime(path)
@@ -83,9 +85,7 @@ def section(h):
         absolute = tmp.write("cfg2.json", '{"source_path": "%s", "names_path": ""}' % path.replace("\\", "/"))
         c(msag.load_config(absolute).source_path == path.replace("\\", "/"), "load_config leaves an absolute path alone")
         raises(lambda: msag.load_config(tmp.write("cfg3.json", '{"source_path": "x", "bogus": 1}')), "load_config refuses an unknown key")
-        out = os.path.join(tmp.root, "saved.json")
-        msag.save_config(cfg, out)
-        c(msag.load_config(out).min_match_rate == 0.9, "save_config writes a file that load_config reads back")
+        c(not hasattr(msag, "save_config"), "msag holds no function that writes a config, so only --apply writes a file  <-- pinned defect")
 
         # ---- exceptions and name lists
         exc_path = tmp.write("exc.csv", "kind,community,prefix,street,type,suffix,esn\nname,,,ALPHA,ST,,\nname,,,BETA,ST,,200\npermanent,testville,,GAMMA,ST,,300\nname,,,,,,\n\n")

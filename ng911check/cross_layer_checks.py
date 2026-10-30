@@ -34,11 +34,14 @@ def _covering_side(hno, s):
 
 def _candidate_segments(a, ctx):
     """Same-name segments for address a, keyed by BOTH its supplied _NAMEKEY
-    and its raw component name (PREFIX/STREET_NA/TYPE/SUFFIX), de-duped by SEGMENT_ID.
+    and its raw component name (PREFIX/STREET_NA/TYPE/SUFFIX), each segment once.
 
     Mirrors engine.build_context's street raw_key index: when a caller built an address's
     _NAMEKEY some other way and it points at the wrong name, the raw component key recovers
     the segment that truly carries the address's name. Only ever ADDS candidates.
+
+    A segment is told apart by identity, never by SEGMENT_ID: a blank, zero or repeated ID
+    would otherwise collapse two real segments of one street into one.
     """
     keys = [a["_NAMEKEY"]]
     raw = normalize(a.get("PREFIX"), a.get("STREET_NA"), a.get("TYPE"), a.get("SUFFIX"))
@@ -48,11 +51,9 @@ def _candidate_segments(a, ctx):
     seen = set()
     for key in keys:
         for s in ctx.streets_by_name.get(key, ()):
-            sid = s.get("SEGMENT_ID")
-            dedup = sid if sid is not None else id(s)
-            if dedup in seen:
+            if id(s) in seen:
                 continue
-            seen.add(dedup)
+            seen.add(id(s))
             out.append(s)
     return out
 
@@ -154,7 +155,7 @@ def check_xlayer_01(addresses, streets, ctx):
                 priority="v1-core", target="both",
                 emits=(SEVERITY.ERROR,), summary="Flag an address number that lies outside every range of its street.",
                 fields=("Add_Number", "FROMLEFT", "FROMRIGHT", "PREFIX", "Parity_L",
-                        "Parity_R", "SEGMENT_ID", "STREET_NA", "SUFFIX",
+                        "Parity_R", "STREET_NA", "SUFFIX",
                         "Site_NGUID", "TOLEFT", "TORIGHT", "TYPE",), requires=())
 def check_xlayer_02(addresses, streets, ctx):
     out = []
@@ -314,7 +315,7 @@ def check_xlayer_13(addresses, streets, ctx):
 @registry.check(id="XLAYER-05", family=FAMILY.CROSS, severity=SEVERITY.WARNING,
                 priority="v1", target="address", default_on=False,
                 emits=(SEVERITY.WARNING, SEVERITY.INFO,), summary="Flag an address far from the nearest centerline that carries its street name.",
-                fields=("Add_Number", "FROMLEFT", "FROMRIGHT", "PREFIX", "SEGMENT_ID",
+                fields=("Add_Number", "FROMLEFT", "FROMRIGHT", "PREFIX",
                         "STREET_NA", "SUFFIX", "Site_NGUID", "TOLEFT",
                         "TORIGHT", "TYPE",), requires=("geometry",))
 def check_xlayer_05(addresses, streets, ctx):

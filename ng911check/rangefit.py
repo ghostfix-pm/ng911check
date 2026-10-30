@@ -15,6 +15,11 @@ JOIN_TOLERANCE_FT = 1.0      # STREET-14: two line ends this close share one poi
 MIN_POSITIONS = 4            # XLAYER-17: fewer house numbers on a side say nothing about order
 MIN_CORRELATION = 0.5        # XLAYER-17: a weaker rank correlation means no clear direction
 END_MARGIN_FT = 0.5          # XLAYER-17: a foot this close to a line end has no side
+ON_LINE_FT = 0.5             # XLAYER-17: a point this close to the line is on neither side of it
+
+
+POSITION_CHECKS = ("XLAYER-17", "XLAYER-18", "XLAYER-19")
+LINE_CHECKS = POSITION_CHECKS + ("STREET-14",)
 
 
 def clearly_farther(near, far, margin, ratio):
@@ -113,7 +118,7 @@ def _record(check_id, title, family, sev, layer, row, nguid, text, xy):
                 fields=("Add_Number", "FROMLEFT", "FROMRIGHT", "PREFIX", "Parity_L", "Parity_R",
                         "SEGMENT_ID", "STREET_NA", "SUFFIX", "Site_NGUID", "TOLEFT", "TORIGHT",
                         "TYPE"),
-                requires=("geometry",))
+                requires=("addresses", "geometry"))
 def check_xlayer_18(addresses, streets, ctx):
     """The segment whose range covers the number is far from the point; another same-name one is near."""
     out = []
@@ -147,7 +152,7 @@ def check_xlayer_18(addresses, streets, ctx):
                 fields=("Add_Number", "FROMLEFT", "FROMRIGHT", "PREFIX", "Parity_L", "Parity_R",
                         "SEGMENT_ID", "STREET_NA", "SUFFIX", "Site_NGUID", "TOLEFT", "TORIGHT",
                         "TYPE"),
-                requires=("geometry",))
+                requires=("addresses", "geometry"))
 def check_xlayer_19(addresses, streets, ctx):
     """The nearest ranged centerline of another name is much nearer than the address's own street."""
     ranged = [s for s in streets if any(True for _r in _side_ranges(s))
@@ -184,8 +189,8 @@ def check_xlayer_19(addresses, streets, ctx):
 def _sides(addresses, ctx):
     """{(segment OID, on right): (segment, [(distance along, number, address)])}.
 
-    Each usable point joins its nearest same-name line. A point whose nearest spot is a line end
-    is left out, because it has no side."""
+    Each usable point joins its nearest same-name line. A point whose nearest spot is a line end,
+    or that lies on the line, is left out, because it has no side."""
     groups = {}
     for a in addresses:
         if not _usable(a, ctx):
@@ -198,7 +203,8 @@ def _sides(addresses, ctx):
             along, dist, right = geom.query(*a["_XY"])
             if best is None or dist < best[0]:
                 best = (dist, along, right, s, geom)
-        if best is None or not END_MARGIN_FT < best[1] < best[4].length - END_MARGIN_FT:
+        if (best is None or best[0] <= ON_LINE_FT
+                or not END_MARGIN_FT < best[1] < best[4].length - END_MARGIN_FT):
             continue
         _dist, along, right, s, _geom = best
         groups.setdefault((s["_OID"], right), (s, []))[1].append(
@@ -224,7 +230,7 @@ def _one_position_per_number(items):
                 summary="Flag an address whose house number is out of order with its neighbours along its street.",
                 fields=("Add_Number", "PREFIX", "STREET_NA", "SEGMENT_ID", "SUFFIX", "Site_NGUID",
                         "TYPE"),
-                requires=("geometry",))
+                requires=("addresses", "geometry"))
 def check_xlayer_17(addresses, streets, ctx):
     """Order the points on one side of one line; flag a number that breaks the order."""
     out = []
@@ -303,3 +309,34 @@ def check_street_14(addresses, streets, ctx):
                        "head-to-head" if kind == "end" else "tail-to-tail"),
                     (x, y)))
     return out
+
+
+def _joined(ids):
+    return ", ".join(ids[:-1]) + " and " + ids[-1] if len(ids) > 1 else ids[0]
+
+
+def coverage_notices(addresses, streets, ctx, running):
+    """Notices for the rows the rangefit checks could not judge, so a zero never reads as clean.
+
+    `running` holds the ids of the checks that run. A point with no position, or a ranged
+    segment with no line, drops out of the checks above without a finding."""
+    notices = []
+    ids = [c for c in POSITION_CHECKS if c in running]
+    real = [a for a in addresses if is_addressable(a)]
+    lost = [a for a in real if a.get("_XY") is None]
+    if ids and lost:
+        hint = ("A CSV needs X and Y columns, or --x-field and --y-field; a GeoJSON feature needs "
+                "a Point geometry. A position of 0, 0 in a degrees run counts as none.")
+        if len(lost) == len(real):
+            notices.append("%s judged no address: none of the %d addresses has a position. %s"
+                           % (_joined(ids), len(real), hint))
+        else:
+            notices.append("%s left out %d of %d addresses that have no position. %s"
+                           % (_joined(ids), len(lost), len(real), hint))
+    ids = [c for c in LINE_CHECKS if c in running]
+    ranged = [s for s in streets if any(True for _r in _side_ranges(s))]
+    unlined = [s for s in ranged if ctx.geom("street", s["_OID"]) is None]
+    if ids and unlined:
+        notices.append("%s left out %d of %d street segments that have an address range and no "
+                       "line." % (_joined(ids), len(unlined), len(ranged)))
+    return notices

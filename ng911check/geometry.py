@@ -22,6 +22,17 @@ EARTH_RADIUS_M = 6371008.8
 FEET_PER_DEGREE = EARTH_RADIUS_M * math.pi / 180.0 * FEET_PER_METER
 
 
+# A position of exactly 0, 0 is the usual stand-in for a missing one. In a degrees run it is a
+# point in the ocean, thousands of miles from any street, so it is treated as no position.
+NULL_ISLAND = (0.0, 0.0)
+
+
+def fits_degrees(coords):
+    """True when there is at least one pair and every pair could be longitude, latitude."""
+    coords = list(coords)
+    return bool(coords) and all(-180.0 <= x <= 180.0 and -90.0 <= y <= 90.0 for x, y in coords)
+
+
 class Frame(object):
     """Converts raw coordinates to planar feet and back."""
 
@@ -35,8 +46,12 @@ class Frame(object):
 
     @classmethod
     def fit(cls, units, coords):
-        """Build the frame for a set of raw (x, y) pairs. Refuse degrees that are not degrees."""
+        """Build the frame for a set of raw (x, y) pairs. Refuse degrees that are not degrees.
+
+        A pair at 0, 0 does not count towards the centre of a degrees frame."""
         coords = list(coords)
+        if units == "degrees":
+            coords = [c for c in coords if c != NULL_ISLAND]
         if units != "degrees" or not coords:
             return cls(units)
         xs = [c[0] for c in coords]

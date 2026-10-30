@@ -75,20 +75,20 @@ def _reader(h, tmp):
         raises(lambda b=bad: reader.parse_renames([b]), "parse_renames refuses %r" % bad)
 
     # ---- CSV addresses
-    p = tmp.write("a1.csv", chr(0xFEFF) + "Add_Number , STREET_NA,TYPE,CITY,X,Y\n12.0,ELM,ST, TESTVILLE ,-81.5,29.1\n\n12A,OAK,AVE,X,,\n,PINE,RD,Y,-81.4,29.2\n13\n")
+    p = tmp.write("a1.csv", chr(0xFEFF) + "Add_Number , STREET_NA,TYPE,CITY,X,Y\n12.0,ELM,ST, TESTVILLE ,-30.5,29.1\n\n12A,OAK,AVE,X,,\n,PINE,RD,Y,-30.4,29.2\n13\n")
     lay = reader.read_layer(p, "addresses")
     c(len(lay.rows) == 4 and lay.rows[0]["Add_Number"] == 12 and lay.rows[1]["Add_Number"] == "12A" and lay.rows[2]["Add_Number"] is None,
       "read_layer turns a whole number into an int, keeps text as text and a blank as None")
     c(lay.rows[0]["CITY"] == " TESTVILLE " and lay.rows[0]["_NAMEKEY"] == "ELM ST" and lay.rows[0]["_OID"] == 1 and lay.rows[2]["_OID"] == 3,
       "read_layer does not strip values (addr-07 needs them) and numbers the data rows")
-    c(lay.rows[0]["_RAW"] == (-81.5, 29.1) and lay.rows[1]["_RAW"] is None and lay.rows[3]["CITY"] == "" and "X" in lay.columns,
+    c(lay.rows[0]["_RAW"] == (-30.5, 29.1) and lay.rows[1]["_RAW"] is None and lay.rows[3]["CITY"] == "" and "X" in lay.columns,
       "read_layer reads X and Y, leaves blank coordinates empty and pads a short row")
-    c(sorted(lay.raw_coords()) == [(-81.5, 29.1), (-81.4, 29.2)] and "ZIP_CODE" in lay.missing_columns() and "Add_Number" not in lay.missing_columns(),
+    c(sorted(lay.raw_coords()) == [(-30.5, 29.1), (-30.4, 29.2)] and "ZIP_CODE" in lay.missing_columns() and "Add_Number" not in lay.missing_columns(),
       "a layer lists its raw coordinates and the columns the file lacks")
 
-    q = tmp.write("a2.csv", "Num,STREET_NA,Lon,Lat\n5,ELM,-81.5,29.1\n")
+    q = tmp.write("a2.csv", "Num,STREET_NA,Lon,Lat\n5,ELM,-30.5,29.1\n")
     lay = reader.read_layer(q, "addresses", {"Num": "Add_Number"}, "Lon", "Lat")
-    c(lay.rows[0]["Add_Number"] == 5 and lay.rows[0]["_RAW"] == (-81.5, 29.1), "read_layer renames a column and reads named coordinate columns")
+    c(lay.rows[0]["Add_Number"] == 5 and lay.rows[0]["_RAW"] == (-30.5, 29.1), "read_layer renames a column and reads named coordinate columns")
     lay = reader.read_layer(tmp.write("a3.csv", "Add_Number,STREET_NA\n5,ELM\n"), "addresses")
     c(lay.rows[0]["_RAW"] is None, "a CSV without coordinate columns has no positions")
     raises(lambda: reader.read_layer(tmp.write("a4.csv", ""), "addresses"), "read_layer refuses a CSV with no header row")
@@ -108,10 +108,10 @@ def _reader(h, tmp):
     raises(lambda: reader.read_layer(tmp.write("s4.csv", "NAME,FROMLEFT\nELM,inf\n"), "streets"), "read_layer refuses an infinite street range")
 
     # ---- GeoJSON addresses
-    g1 = tmp.write("a1.geojson", fc(pt(-81.5, 29.1, Add_Number=7, STREET_NA="ELM", TYPE="ST"), {"type": "Feature", "properties": None, "geometry": None},
+    g1 = tmp.write("a1.geojson", fc(pt(-30.5, 29.1, Add_Number=7, STREET_NA="ELM", TYPE="ST"), {"type": "Feature", "properties": None, "geometry": None},
                                     {"type": "Feature", "properties": {"Add_Number": "9"}}, "not a feature"))
     lay = reader.read_layer(g1, "addresses")
-    c(len(lay.rows) == 4 and lay.rows[0]["_RAW"] == (-81.5, 29.1) and lay.rows[1]["_RAW"] is None and lay.rows[2]["Add_Number"] == 9 and lay.rows[3]["_NAMEKEY"] == "",
+    c(len(lay.rows) == 4 and lay.rows[0]["_RAW"] == (-30.5, 29.1) and lay.rows[1]["_RAW"] is None and lay.rows[2]["Add_Number"] == 9 and lay.rows[3]["_NAMEKEY"] == "",
       "read_layer reads GeoJSON points, a null geometry, a missing properties object and a non-feature")
     lay = reader.read_layer(tmp.write("a2.geojson", fc(pt(1.0, 2.0, Num=3))), "addresses", {"Num": "Add_Number"})
     c(lay.rows[0]["Add_Number"] == 3, "read_layer renames a GeoJSON property")
@@ -309,9 +309,9 @@ def _report(h):
     c(report.exit_status(recs) == 1 and report.exit_status([r1, r3]) == 0 and report.exit_status([]) == 0, "exit_status is 1 only when an ERROR remains")
     rows = report.to_rows(recs, Frame("feet"))
     c(rows[0]["x"] == "" and rows[1]["x"] == "10.000" and rows[1]["y"] == "20.000" and rows[0]["row"] == 1, "to_rows writes feet with three decimals and a blank for no position")
-    deg = Frame("degrees", -81.0, 29.0)
+    deg = Frame("degrees", -30.0, 29.0)
     r4 = ErrorRecord("A-3", "n", "f", "INFO", "dataset", 0, "", "fourth", (0.0, 0.0))
-    c(report.to_rows([r4], deg)[0]["x"] == "-81.0000000" and report.to_rows([r4], deg)[0]["y"] == "29.0000000", "to_rows writes degrees with seven decimals")
+    c(report.to_rows([r4], deg)[0]["x"] == "-30.0000000" and report.to_rows([r4], deg)[0]["y"] == "29.0000000", "to_rows writes degrees with seven decimals")
     text = report.to_csv_text(rows)
     c(text.splitlines()[0] == ",".join(report.CSV_COLUMNS) and '"first, with a comma"' in text and "\r" not in text and text.endswith("\n"), "to_csv_text quotes a comma, writes LF and starts with the header")
     doc = json.loads(report.to_json(rows, ["n1"], {"ERROR": 1}))

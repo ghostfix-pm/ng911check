@@ -22,7 +22,7 @@ import json
 import os
 import time
 from collections import defaultdict
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from typing import Optional
 
 from .common import normalize, is_addressable
@@ -55,7 +55,7 @@ ESN_MAX_DIGITS = 5   # the widest ESN ADDR-05 accepts
 
 @dataclass
 class MsagConfig:
-    source_path: str
+    source_path: Optional[str] = None         # the MSAG CSV; --msag can supply it instead
     header_row: int = 0                       # 1-based; 0 finds the header row by its tokens
     field_map: dict = field(default_factory=lambda: dict(DEFAULT_FIELD_MAP))
     esn_pad_width: int = 3
@@ -66,16 +66,56 @@ class MsagConfig:
     source_hash: Optional[str] = None         # when set, the source must hash to this
 
 
+def _is_text(value):
+    return value is None or isinstance(value, str)
+
+
+def _is_count(value, low=0):
+    return isinstance(value, int) and not isinstance(value, bool) and value >= low
+
+
+def _is_field_map(value):
+    return value is None or (isinstance(value, dict)
+                             and all(isinstance(v, str) for v in value.values()))
+
+
+def _is_fraction(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value <= 1
+
+
+# (key, test, what the key must be). A wrong type would otherwise crash the run with exit 70.
+_CONFIG_RULES = (
+    ("source_path", _is_text, "text or null"),
+    ("exceptions_path", _is_text, "text or null"),
+    ("names_path", _is_text, "text or null"),
+    ("source_hash", _is_text, "text or null"),
+    ("field_map", _is_field_map, "an object of column names"),
+    ("header_row", _is_count, "a whole number, 0 or more"),
+    ("esn_pad_width", _is_count, "a whole number, 0 or more"),
+    ("max_source_age_days", lambda v: v is None or _is_count(v), "a whole number of days, or null"),
+    ("min_match_rate", _is_fraction, "a fraction from 0 to 1, for example 0.98"),
+)
+
+
 def load_config(path):
-    with open(path, "r", encoding="utf-8") as f:
-        data = json.load(f)
+    """Read an MSAG config. Every refusal is a ValueError that names the file and the key."""
+    with open(path, "r", encoding="utf-8-sig") as f:
+        try:
+            data = json.load(f)
+        except ValueError as exc:
+            raise ValueError("%s: not valid JSON (%s)" % (path, exc))
+    if not isinstance(data, dict):
+        raise ValueError("%s: expected a JSON object of MSAG settings" % path)
+    for key, test, want in _CONFIG_RULES:
+        if key in data and not test(data[key]):
+            raise ValueError("%s: %s must be %s, got %r" % (path, key, want, data[key]))
     fm = dict(DEFAULT_FIELD_MAP)
     fm.update(data.get("field_map") or {})
     data["field_map"] = fm
     unknown = set(data) - set(MsagConfig.__dataclass_fields__)
     if unknown:
-        raise ValueError("Unknown MSAG config key(s): %s - check for typos"
-                         % ", ".join(sorted(unknown)))
+        raise ValueError("%s: unknown MSAG config key(s): %s - check for typos"
+                         % (path, ", ".join(sorted(unknown))))
     cfg = MsagConfig(**data)
     # Resolve RELATIVE paths against the config file's own folder, so a config kept next to
     # its data is portable across machines.
@@ -85,11 +125,6 @@ def load_config(path):
         if value and not os.path.isabs(value):
             setattr(cfg, attr, os.path.normpath(os.path.join(base, value)))
     return cfg
-
-
-def save_config(cfg, path):
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(asdict(cfg), f, indent=2)
 
 
 def file_hash(path):
@@ -106,10 +141,11 @@ def verify_source_hash(config):
     if config.source_hash is None:
         return
     got = file_hash(config.source_path)
-    if got != config.source_hash:
+    pinned = config.source_hash.strip().lower()   # Get-FileHash prints upper case
+    if got != pinned:
         raise ValueError("MSAG source %s changed: its SHA-256 is %s but the config pins %s. "
                          "Review the file, then update source_hash."
-                         % (config.source_path, got[:12], config.source_hash[:12]))
+                         % (config.source_path, got[:12], pinned[:12]))
 
 
 def source_age_days(path, now=None):
