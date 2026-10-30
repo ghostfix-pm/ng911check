@@ -231,6 +231,15 @@ def override_note(check_id, sv):
     return ""
 
 
+def _check_note(cid, on):
+    if cid in _FOREIGN_IDS:
+        return "  (no effect: %s is not run by this package)" % cid
+    spec = registry.get(cid)
+    if not on and spec is not None and SEVERITY.ERROR in spec.emits:
+        return "  (can emit ERROR: its findings are NOT in this report)"
+    return ""
+
+
 def effective_lines(st):
     """Human-readable summary of what the settings change, before any run."""
     out = ["Settings source: %s" % (st.source or "(built-in defaults)")]
@@ -245,7 +254,7 @@ def effective_lines(st):
     if st.checks:
         out.append("Check on/off overrides:")
         for cid, on in sorted(st.checks.items()):
-            note = "" if cid not in _FOREIGN_IDS else "  (no effect: %s is not run by this package)" % cid
+            note = _check_note(cid, on)
             out.append("  %-12s %s%s" % (cid, "on" if on else "off", note))
     if st.areas:
         out.append("Response-area rules:")

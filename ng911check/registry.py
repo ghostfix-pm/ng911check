@@ -6,7 +6,7 @@ _REGISTRY = {}
 
 # What a check needs from the run before it can say anything. A check that needs one of
 # these and does not get it is reported as skipped, never run on nothing.
-REQUIRES = ("geometry", "msag", "modifier_domains")   # plus "area:<check id>" per area rule
+REQUIRES = ("addresses", "streets", "geometry", "msag", "modifier_domains")   # plus "area:<check id>" per area rule
 
 
 @dataclass

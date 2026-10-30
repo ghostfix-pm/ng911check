@@ -116,6 +116,19 @@ def _finish_row(row, name, oid, where):
     row["_NAMEKEY"] = _NAMEKEY[name](row)
 
 
+def _plain_values(row, name, where):
+    """A GeoJSON number in a text column becomes the text a CSV would hold. A list, an
+    object or a boolean refuses the file, because no check can read it."""
+    for key, value in list(row.items()):
+        if value is None or isinstance(value, str):
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            _fail(where, "property %s must be a string, a number or null, got %r"
+                  % (key, value))
+        if key not in _NUMERIC[name]:
+            row[key] = "%d" % value if float(value).is_integer() else repr(value)
+
+
 def _pair(pos, where):
     ok = (isinstance(pos, list) and len(pos) >= 2
           and all(isinstance(v, (int, float)) and not isinstance(v, bool)
@@ -189,6 +202,7 @@ def _read_geojson(path, name, renames):
         props = feature.get("properties") if isinstance(feature, dict) else None
         row = dict(props) if isinstance(props, dict) else {}
         _rename_row(row, renames, where)
+        _plain_values(row, name, where)
         columns.update(row)
         kind, coords = _geometry(feature, where)
         raw = None
@@ -218,10 +232,16 @@ def read_layer(path, name, renames=None, x_field="X", y_field="Y"):
     renames = renames or {}
     ext = os.path.splitext(path)[1].lower()
     if ext == ".csv":
-        return _read_csv(path, name, renames, x_field, y_field)
-    if ext in (".geojson", ".json"):
-        return _read_geojson(path, name, renames)
-    raise ValueError("%s: unsupported file type %r (use .csv, .geojson or .json)" % (path, ext))
+        layer = _read_csv(path, name, renames, x_field, y_field)
+    elif ext in (".geojson", ".json"):
+        layer = _read_geojson(path, name, renames)
+    else:
+        raise ValueError("%s: unsupported file type %r (use .csv, .geojson or .json)"
+                         % (path, ext))
+    if not layer.rows:
+        _fail(path, "the %s file has no rows, so nothing was checked. An empty file passes "
+              "as clean; re-export the layer or point --%s at the right file." % (name, name))
+    return layer
 
 
 def read_areas(path, key_prop):

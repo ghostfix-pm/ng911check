@@ -200,7 +200,7 @@ def section(h):
     c(len(r) == 0, "xlayer-09 passes a clean segment")
 
     # ---- XLAYER-14 ranges with no address point
-    r = run([], [S()], ["XLAYER-14"])
+    r = run([A(Add_Number=301, HOUSE_NU="301")], [S()], ["XLAYER-14"])
     c(found(r, "XLAYER-14", "INFO", "no active address covers") == 1, "xlayer-14 reports a segment no address point covers")
     r = run([A()], [S()], ["XLAYER-14"])
     c(len(r) == 0, "xlayer-14 passes a segment an address point covers")

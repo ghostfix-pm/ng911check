@@ -91,9 +91,12 @@ class Context:
     authoritative_names: Optional[set] = None  # None => STREET-11 runs degraded
 
     def name_ignored(self, name_key):
-        """True if this street name should be skipped by the name-based checks."""
+        """True if this street name should be skipped by the name-based checks.
+
+        An ignored name matches whole words: ELM skips ELM ST and N ELM AVE, never ELMWOOD DR."""
         nk = (name_key or "").strip().upper()
-        return any(ig in nk for ig in self.street_names_ignored)
+        padded = " %s " % nk
+        return any(" %s " % ig in padded for ig in self.street_names_ignored)
 
     def geom(self, layer, oid):
         if self.geom_provider is None:

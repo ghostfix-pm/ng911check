@@ -1,8 +1,8 @@
 # ng911check
 
 Run documented NG9-1-1 address and centerline checks on a CSV or GeoJSON file. Refuse to let a
-settings line switch a routing error off, and refuse to report an MSAG match rate that hides how
-well the two sources really agree.
+severity line in a settings file lower a routing error, and refuse to report an MSAG match rate
+that hides how well the two sources really agree.
 
 Python 3.9 or newer. Standard library only. No GIS licence, no database, no network.
 
@@ -26,18 +26,23 @@ ERROR. The report prints what each override did on this run, including the overr
 nothing. For the MSAG it prints three numbers side by side: the coverage rate, the exact-tuple
 rate and the age of the file.
 
+The rule covers `[severity]` lines only. A `[checks]` line such as `ADDR-05 = off` switches a whole
+check off, on purpose, and the tool does not refuse it. The report names every switched-off check
+that can emit an ERROR and says that its findings are not in the report. A run with such a line can
+exit 0 on data that holds errors, so read the header of the report.
+
 This run uses the settings file `tuned.ini`, which holds the two lines above and `ADDR-03 = ERROR`.
-The files are synthetic: four address points on one street.
+The files are in the `demo` folder and are synthetic: four address points on one street.
 
 ```
-$ python -m ng911check --addresses addresses.csv --streets streets.csv --settings tuned.ini --units feet
+$ python -m ng911check --addresses demo/addresses.csv --streets demo/streets.csv --settings demo/tuned.ini --units feet
 ng911check report
 --------------------------------------------------------------------
-addresses: addresses.csv (4 rows)
-streets: streets.csv (1 rows)
+addresses: demo/addresses.csv (4 rows)
+streets: demo/streets.csv (1 rows)
 units: feet
 
-Settings source: tuned.ini
+Settings source: demo/tuned.ini
 Thresholds/agency overrides:
   expected_agid            = agency.example.org
 Severity overrides:
@@ -49,7 +54,9 @@ Override effects on this run:
   ADDR-05        INFO: 1 raised or lowered, 1 held at ERROR, 0 INFO untouched, 0 already INFO
   XLAYER-14      ERROR: 0 raised or lowered, 0 held at ERROR, 0 INFO untouched, 0 already ERROR
 
-NOTICE: ... (three notices: XLAYER-13, XLAYER-15, STREET-11)
+NOTICE: XLAYER-13 was skipped: it needs street geometry (a GeoJSON streets file).
+NOTICE: XLAYER-15 was skipped: it needs modifier domains (--domains with premod, postmod or pretypesep rows).
+NOTICE: STREET-11 ran in DEGRADED mode: no MSAG was loaded, so there was no authoritative road-name list to check against. Its findings here are a fallback heuristic: it flags a name only because that name shares no significant word with any OTHER name in the street layer, which false-positives on legitimately unique roads, and they are emitted at INFO to say so. A road being in the MSAG cannot help in this mode, because this run never opened the MSAG. For the real check, run with --msag.
 
 Findings: 3 ERROR, 0 WARNING, 2 INFO
   ADDR-05            ERROR    1
@@ -63,7 +70,8 @@ First 5 finding(s), most severe first:
   ERROR   XLAYER-01  address row 4: ESN 200 != covering side ESN(s) ['100'] (SEG 1 Left)
   INFO    ADDR-05    address row 3: STATUS 'RETIRED' not in domain (expected ACTIVE)
   INFO    STREET-11  street row 1: name 'ELM ST' unmatched in degraded fuzzy check (no master list)
-                                                              (exit 1)
+$ echo $?
+1
 ```
 
 The invalid ESN is still an ERROR and the run exits 1. The retired point became INFO, as asked.
@@ -101,22 +109,32 @@ PASS  the package folder holds Python files only, so no vendor domain file ships
 ...
 PASS  check() and raises() really do record a failure  <-- pinned defect
 ...
+PASS  a clean address file given alone exits 0 and says XLAYER-04 was skipped  <-- pinned defect
+...
+PASS  a header-only CSV exits 2 instead of passing as clean  <-- pinned defect
+...
+PASS  a GeoJSON number in a text column is read as text and the run gives a verdict, not exit 70  <-- pinned defect
+...
+PASS  an ignored name ELM skips ELM ST and N ELM AVE, never ELMWOOD DR  <-- pinned defect
+...
+PASS  a four or five digit MSAG ESN is compared with the GIS, not dropped from the rate  <-- pinned defect
+...
 PASS  ADDR-05 declares exactly the columns it reads
 ...
 PASS  xlayer-10 flags six name pairs that do not agree
 ...
 --------------------------------------------------------------------
-676 assertions, 0 failed
+708 assertions, 0 failed
 ```
 
-The full run prints all 676 assertions. Each `...` line above is where the block is cut.
+The full run prints all 708 assertions. Each `...` line above is where the block is cut.
 `python -m ng911check --self-test` exits 0 when every assertion passes and 1 when one fails.
 
 | Host | Python | Assertions |
 |---|---|---|
-| Windows | 3.13.2 | 676 assertions, 0 failed |
-| Windows | 3.9.25 | 676 assertions, 0 failed |
-| Ubuntu | 3.12.3 | 676 assertions, 0 failed |
+| Windows | 3.13.2 | 708 assertions, 0 failed |
+| Windows | 3.9.25 | 708 assertions, 0 failed |
+| Ubuntu | 3.12.3 | 708 assertions, 0 failed |
 
 The counts are equal on every host because the self-test never branches on the platform. It writes
 its files to a temporary folder and removes the folder at the end.
@@ -164,8 +182,10 @@ shows only that the search found nothing more.
 git clone https://github.com/uhsear/ng911check.git
 cd ng911check
 python -m ng911check --self-test
-python -m ng911check --addresses addresses.csv --streets streets.csv --settings agency.ini --units feet
+python -m ng911check --addresses demo/addresses.csv --streets demo/streets.csv --settings demo/agency.ini --units feet
 ```
+
+The `demo` folder holds the synthetic files that every quoted run in this file uses.
 
 The agency is required. Put `expected_agid = your.agency.domain` under `[agency]` in the settings
 file, or pass `--agency`. The tool refuses to run without it, because a default agency would make
@@ -187,7 +207,7 @@ python -m ng911check --catalog-check README.md
 | Flag | Default | What it does |
 |---|---|---|
 | `--addresses FILE` | none | Address points, `.csv` or `.geojson`. |
-| `--streets FILE` | none | Centerlines, `.csv` or `.geojson`. A run needs one of the two layers. |
+| `--streets FILE` | none | Centerlines, `.csv` or `.geojson`. A run needs one of the two layers. A check that compares the two layers is skipped, with a notice, when one is missing. |
 | `--settings INI` | none | The calibration file. See Settings. |
 | `--agency DOMAIN` | none | The agency domain NGUIDs must end in. It replaces the settings file value. |
 | `--units` | `degrees` | Units of every coordinate: `degrees`, `feet` or `meters`. |
@@ -196,7 +216,7 @@ python -m ng911check --catalog-check README.md
 | `--domains CSV` | none | More street types, directions and modifier values: `domain,full,abbrev`. |
 | `--msag CSV` | none | The MSAG as a CSV. It turns on XLAYER-16. |
 | `--msag-config JSON` | none | The MSAG column map, header row, floors and a pinned SHA-256. |
-| `--msag-exceptions CSV` | none | MSAG records to leave out of the match rate. |
+| `--msag-exceptions CSV` | none | MSAG records to leave out of the match rate. See The MSAG numbers. |
 | `--street-names CSV` | none | An authoritative street-name list for STREET-11. |
 | `--optional` | off | Also run the checks that are off by default. |
 | `--show N` | `20` | How many findings to print. |
@@ -218,23 +238,32 @@ Exit codes: 0 no ERROR finding, 1 at least one ERROR after the overrides, 2 an i
 file was refused or could not be read, 64 usage error, 70 an unexpected crash. A crash never
 reads as a finding.
 
+In the runs below, `ARGS` stands for `--addresses demo/addresses.csv --streets demo/streets.csv --settings demo/agency.ini --units feet`.
+A line that holds only `...` is where this file cuts the report.
+
 ```
-$ python -m ng911check --addresses addresses.csv --streets streets.csv --settings agency.ini --units feet --out found.csv
+$ python -m ng911check $ARGS --out found.csv
 ...
 Would write the findings to found.csv. Add --apply to write them.
 $ ls found.csv
 ls: cannot access 'found.csv': No such file or directory
-$ python -m ng911check ... --out found.csv --ap
-ng911check: error: unrecognized arguments: --ap                    (exit 64)
-$ python -m ng911check ... --out found.csv --apply
+$ python -m ng911check $ARGS --out found.csv --ap
+ng911check: error: unrecognized arguments: --ap
+$ echo $?
+64
+$ python -m ng911check $ARGS --out found.csv --apply
 ...
 Wrote found.csv.
 $ head -2 found.csv
 check_id,check_name,family,severity,layer,row,nguid,description,x,y
-ADDR-05,Address domain/bounds violation,address_attr,ERROR,address,2,ADR103@agency.example.org,ESN 'ABC' not a valid 1-5 digit ESN,,
-$ python -m ng911check --addresses addresses.csv --settings agency.ini --out addresses.csv --apply
-ng911check: error: --out would overwrite an input file             (exit 64)
+ADDR-05,Address domain/bounds violation,address_attr,ERROR,address,2,ADR103@agency.example.org,ESN 'ABC' not a valid 1-5 digit ESN,1010.000,1010.000
+$ python -m ng911check --addresses demo/addresses.csv --settings demo/agency.ini --out demo/addresses.csv --apply
+ng911check: error: --out would overwrite an input file
+$ echo $?
+64
 ```
+
+On a refused run the parser also prints its usage block. This file cuts that block.
 
 ## Inputs
 
@@ -248,6 +277,11 @@ A GeoJSON layer must be a `FeatureCollection`. Addresses take `Point`. Streets t
 latitude. RFC 7946 section 3.1.1 says: "The first two elements are longitude and latitude, or
 easting and northing, precisely in that order". Streets with geometry turn on XLAYER-13.
 XLAYER-05 also needs `--optional` or `[checks] XLAYER-05 = on`.
+
+A GeoJSON property may be a string, a number or null. A number in a text column is read as the
+text a CSV would hold, so `"COUNTY": 12083` reads as `12083`. A list, an object or `true` or `false`
+refuses the file with exit 2. A header-only CSV, or a `FeatureCollection` with no features, also
+refuses the file with exit 2. An empty export would otherwise pass as clean.
 
 Values are not stripped, because ADDR-07 exists to find leading and trailing spaces. A street range
 that is not a whole number refuses the file. Reading it as blank would make a broken range look
@@ -270,10 +304,13 @@ weaken a run. A key you leave out takes its built-in default.
 |---|---|
 | `[thresholds]` | `min_address`, `max_address`, `max_range_gap`, `distance_tolerance_ft`, `sync_threshold` |
 | `[agency]` | `expected_agid` (required), `strict_fqdn`, `expected_state`, `counties` |
-| `[names]` | `ignored`: street names the name checks skip |
+| `[names]` | `ignored`: street names the name checks skip. A name matches whole words: `ELM` skips `ELM ST` and `N ELM AVE`, never `ELMWOOD DR`. |
 | `[checks]` | `CHECK-ID = on` or `off` |
 | `[severity]` | `CHECK-ID = ERROR`, `WARNING` or `INFO` |
 | `[areas]` | `RA-xx = file.geojson|key_property[|fields[|sentinel]]` |
+
+A `[checks]` line with `off` removes every finding of that check. The report prints the line, and for
+a check that can emit an ERROR it adds `(can emit ERROR: its findings are NOT in this report)`.
 
 The severity rule has three parts. An override may raise a WARNING to ERROR. An override never
 lowers an ERROR record. An INFO metric line is left alone. The report prints, before the run, what
@@ -297,20 +334,45 @@ reports three numbers together:
 - **Source age.** The days since the MSAG file changed. `max_source_age_days` in the config turns an
   old file into a WARNING.
 
+Three kinds of MSAG record are left out of both rates and out of the findings, with or without an
+exceptions file: a record on ESN 999, a record whose range is an explicit 0-0, and a record whose
+ESN is all digits and longer than five digits. The report prints `N of M records excepted`. A four
+or five digit ESN is compared, because ADDR-05 accepts one to five digits. The exceptions file
+adds more records, through `--msag-exceptions`. Its header is
+`kind,community,prefix,street,type,suffix,esn`. A `name` row leaves a street out on one ESN, or on
+every ESN when `esn` is blank. A `permanent` row leaves one community, street and ESN out. The
+street-name list of `--street-names` has the header `community,street_name`.
+
+The `--msag-config` file is JSON. A key you leave out takes its default. An unknown key refuses the file.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `source_path` | none | The MSAG CSV. A relative path starts at the folder of the config file. |
+| `header_row` | `0` | The 1-based header row. `0` finds it by its column names. |
+| `field_map` | `PREFIX`, `STREET NAME`, `TYPE`, `SUFFIX`, `LOW`, `HIGH`, `COMMUNITY`, `SIDE`, `ESN` | Maps `prefix`, `street_name`, `type`, `suffix`, `low`, `high`, `community`, `parity` and `esn` to your column names. |
+| `esn_pad_width` | `3` | ESNs are zero-padded to this width before they are compared. |
+| `exceptions_path` | none | The exceptions CSV. |
+| `names_path` | none | The street-name CSV. |
+| `min_match_rate` | `0.98` | The floor, as a fraction. |
+| `max_source_age_days` | none | An older MSAG file is a WARNING. Without it the age is only reported. |
+| `source_hash` | none | A SHA-256. A file that no longer hashes to it refuses the run with exit 2. |
+
 The report also prints a roll-up by street, so one thousand findings on forty streets read as forty
 rows. Three more WARNINGS refuse to let a rate stand alone: no eligible record at all, a record
 that fell into no bucket, and a file older than the limit.
 
 ```
-$ python -m ng911check --addresses addresses.csv --streets streets.csv --settings agency.ini --units feet --msag msag.csv
+$ python -m ng911check $ARGS --msag demo/msag.csv
 ...
 MSAG reconciliation:
   MSAG match rate 66.67% (matched 2/3 eligible); NENA floor 98.00% -> BELOW FLOOR [unmatched: 0 range mismatch, 1 not in GIS, 0 gap-with-no-address]
   MSAG exact-tuple rate 33.33% (1/3 eligible equal one whole GIS run on community, street, parity, extent and ESN); coverage match rate 66.67%; 0 of 3 records excepted
   MSAG source is 0 day(s) old (no limit set)
-...
-MSAG roll-up by street (top 1 of 1):
+
+MSAG roll-up by street (top 2 of 2):
+  TESTVILLE            ELM ST                          1  (0 not in GIS, 1 not in MSAG, 0 range, 0 ESN)
   TESTVILLE            OAK AVE                         1  (1 not in GIS, 0 not in MSAG, 0 range, 0 ESN)
+...
 ```
 
 The floor of 98 percent is the default `min_match_rate`. Secondary sources, a Montana NG9-1-1
@@ -359,7 +421,7 @@ what a check needs from the run. A check that does not get it is skipped, and th
 | XLAYER-01 | both | ERROR | yes | - | Flag an address ESN that differs from the ESN of the street side that covers it. |
 | XLAYER-02 | both | ERROR | yes | - | Flag an address number that lies outside every range of its street. |
 | XLAYER-03 | address | WARNING | yes | - | Flag an address whose odd or even number contradicts the declared parity of its covering side. |
-| XLAYER-04 | both | ERROR | yes | - | Flag an address whose street name no centerline carries. |
+| XLAYER-04 | both | ERROR | yes | streets | Flag an address whose street name no centerline carries. |
 | XLAYER-04b | both | WARNING, INFO | yes | - | Flag a stored COMPARE value that differs from the name rebuilt from its parts. |
 | XLAYER-05 | address | WARNING, INFO | no | geometry | Flag an address far from the nearest centerline that carries its street name. |
 | XLAYER-06 | address | WARNING | no | - | Flag an address city or ZIP that differs from the covering street side. |
@@ -370,7 +432,7 @@ what a check needs from the run. A check that does not get it is skipped, and th
 | XLAYER-11 | both | INFO, WARNING | no | - | Report the share of address points that pass the ESN, range, parity and name checks. |
 | XLAYER-12 | both | ERROR | yes | - | Flag an address that two segments of one street both cover. |
 | XLAYER-13 | address | WARNING | yes | geometry | Flag an address on the opposite side of the centerline from the side its number implies. |
-| XLAYER-14 | street | INFO | yes | - | Report a street segment that has an address range but no address point inside it. |
+| XLAYER-14 | street | INFO | yes | addresses | Report a street segment that has an address range but no address point inside it. |
 | XLAYER-15 | both | WARNING | yes | modifier domains | Flag a modifier or separator value that is not in the supplied domain. |
 | XLAYER-16 | both | WARNING, ERROR, INFO | no | msag | Compare the MSAG with the GIS ranges and report coverage, exact-tuple rate, differences and file age. |
 <!-- catalog:end -->
@@ -407,6 +469,29 @@ ESN rule in ADDR-05, one to five digits and not zero, is also a local choice.
   the code. Add a name there for a new saint road.
 - A range check for address points against the range of the segment they front is not in this
   release.
+- A match rate below the floor is only an INFO line (`BELOW FLOOR`), and an INFO metric line cannot be escalated. A run with a 33 percent MSAG match rate and no GIS-side ERROR exits 0. The exit code never reflects `min_match_rate`.
+- An MSAG with no eligible record, because every record is excepted or the file has no data rows, prints a 100 percent rate over 0 records. Only a WARNING says that nothing was compared, so the run exits 0.
+- The MSAG source age comes from the file modification time. A freshly copied or downloaded MSAG reads as 0 days old.
+- A non-numeric MSAG `LOW` or `HIGH` value, for example `1,000` or `1O1`, is read as blank. The record then shows up as `gap-with-no-address`, and the report never names the real cause.
+- The MSAG config values are not checked for type or range. A `min_match_rate` of 98 instead of 0.98 prints a floor of 9800 percent and always says `BELOW FLOOR`. A quoted number such as `"max_source_age_days": "30"` stops the run with a traceback and exit 70.
+- The MSAG config JSON is read as plain UTF-8. A file saved with a byte order mark is refused with exit 2, and the message does not name the file.
+- A CSV that is not UTF-8, for example Windows-1252 or the UTF-16 "Unicode text" format of Excel, is refused with exit 2. The message does not name the file or say to save it as UTF-8.
+- When the report is piped or redirected on Windows, a character outside Windows-1252 in the data, such as a zero-width space, makes the print fail. The run then exits 2 as if an input could not be read, and the report and any `--out` file are lost.
+- The `--out` CSV writes input values as they are. A `Site_NGUID` that starts with `=`, `+`, `-` or `@` is a formula when a spreadsheet opens the findings file. Open the file as text.
+- Column names are matched with their exact case. A file with lowercase headers gets a missing-column notice and many blank-field errors, such as `DiscrpAgID None invalid`, instead of one clear message.
+- A CSV row with more cells than the header is read with the extra cells dropped, and no notice is printed. An unquoted comma inside a value hides the shift, so quote values that contain commas.
+- Rows without a geometry, a GeoJSON feature with null geometry or a CSV row without X and Y, are left out of the distance and side checks, and the report does not count them. The response-area checks call such a row `not inside any` polygon.
+- CSV points at X=0 and Y=0 count as real locations. In a degrees run they move the centre of the planar frame and skew every distance, so remove them first.
+- `--units feet` over data that is really degrees, and swapped longitude and latitude inside the degree range, cannot be detected.
+- An address far from its street is reported at INFO by XLAYER-05 when its number falls inside a range of a same-name segment. INFO never changes the exit code, even with `--optional`.
+- The degraded STREET-11 notice also prints when no street file is given.
+- The response-area roll-up still prints when the area check is switched off with `[checks]`. A finding names a column the file lacks as `'None'`, for example `ONEWAY 'None' not a recognized value`.
+- ADDR-08 says `missing house number` for an alphanumeric number such as `12A`. The number is present but not numeric.
+- `--show` takes a non-negative number. A negative value drops that many findings from the end of the printed list.
+- With `--apply` the tool writes `OUT.tmp` first and then renames it onto `OUT`. Do not keep another file under that name. A failed rename, for example `--out` naming a folder, leaves `OUT.tmp` behind.
+- The `--out` guard compares resolved paths, not file identity. A symbolic link or a different case on Windows is caught. A hard link to an input file is not, but the tool replaces the name and leaves the input's own content as it was.
+- `msag.save_config` writes a file without `--apply`. No command line path calls it, and only the self-test does.
+- The Earth radius and the length of a degree are cited to Wikipedia pages, not to an official source such as IUGG or NIMA TR8350.2.
 
 ## Related
 

@@ -126,6 +126,36 @@ def section(h):
         clean = csv_file(tmp, "clean.csv", reader.ADDRESS_COLUMNS, [A()])
         code, out, err = call(["--addresses", clean, "--streets", strt, "--settings", ini])
         c(code == 0 and "Findings: 0 ERROR" in out, "a run with no ERROR exits 0")
+        code, out, err = call(["--addresses", clean, "--settings", ini])
+        c(code == 0 and "XLAYER-04 was skipped: it needs a street file (--streets)" in out and "no centerline named" not in out,
+          "a clean address file given alone exits 0 and says XLAYER-04 was skipped  <-- pinned defect")
+        code, out, err = call(["--streets", strt, "--settings", ini])
+        c("XLAYER-14 was skipped: it needs an address file (--addresses)" in out and "no active address covers" not in out,
+          "a street file given alone skips XLAYER-14 instead of calling every segment uncovered  <-- pinned defect")
+        header_only = tmp.write("header_only.csv", ",".join(reader.ADDRESS_COLUMNS) + "\n")
+        code, out, err = call(["--addresses", header_only, "--settings", ini])
+        c(code == 2 and "the addresses file has no rows, so nothing was checked" in err and out == "",
+          "a header-only CSV exits 2 instead of passing as clean  <-- pinned defect")
+        empty_gj = tmp.write("empty.geojson", collection())
+        code, out, err = call(["--streets", empty_gj, "--settings", ini])
+        c(code == 2 and "the streets file has no rows" in err, "an empty FeatureCollection exits 2 instead of passing as clean  <-- pinned defect")
+        num_gj = tmp.write("num.geojson", collection(feature("Point", [-81.4995, 29.10015], dict(A(), COUNTY=12083, STATE=12, ESN=100, Site_NGUID=7))))
+        code, out, err = call(["--addresses", num_gj, "--settings", ini])
+        c(code == 1 and err == "" and "Findings:" in out, "a GeoJSON number in a text column is read as text and the run gives a verdict, not exit 70  <-- pinned defect")
+        list_gj = tmp.write("list.geojson", collection(feature("Point", [-81.4995, 29.10015], dict(A(), COUNTY=["a"]))))
+        code, out, err = call(["--addresses", list_gj, "--settings", ini])
+        c(code == 2 and "property COUNTY must be a string, a number or null" in err, "a GeoJSON list in a property exits 2, not 70  <-- pinned defect")
+        bool_gj = tmp.write("bool.geojson", collection(feature("Point", [-81.4995, 29.10015], dict(A(), STATE=True))))
+        code, out, err = call(["--addresses", bool_gj, "--settings", ini])
+        c(code == 2 and "property STATE must be a string, a number or null" in err, "a GeoJSON boolean in a property exits 2, not 70")
+        off_ini = tmp.write("off.ini", INI + "[checks]\nADDR-05 = off\nXLAYER-01 = off\nADDR-07 = off\n")
+        off_addr = csv_file(tmp, "off_addr.csv", reader.ADDRESS_COLUMNS, [A(ESN="ABC")])
+        code, out, err = call(["--addresses", off_addr, "--streets", strt, "--settings", ini])
+        c(code == 1 and "ESN 'ABC' not a valid 1-5 digit ESN" in out, "the same address file with the ESN checks left on exits 1")
+        code, out, err = call(["--addresses", off_addr, "--streets", strt, "--settings", off_ini])
+        c(code == 0 and "ADDR-05" in out and "(can emit ERROR: its findings are NOT in this report)" in out and "ESN 'ABC'" not in out,
+          "a [checks] off line removes the ERRORs and the report says the check can emit ERROR  <-- pinned defect")
+        c(out.count("can emit ERROR") == 2, "the off note is written only for a check that can emit ERROR")
 
         # ---- the rule, through the command line
         rule_ini = tmp.write("rule.ini", INI + "[severity]\nADDR-05 = INFO\nADDR-01 = INFO\n")
@@ -192,6 +222,9 @@ def _geojson(h, tmp, ini):
     c("MSAG reconciliation:" in out and "MSAG match rate" in out and "MSAG exact-tuple rate" in out and "MSAG source is " in out, "the report prints the match rate, the exact-tuple rate and the source age together")
     c("MSAG roll-up by street (top 1 of 1):" in out and "OAK AVE" in out and "1 not in GIS" in out, "the report prints the MSAG roll-up by street")
     c("Response-area roll-up (top " in out and "RA-08" in out and "inside 100" in out and "stored 200" in out, "the report prints the response-area roll-up")
+    code, out, err = call([a for a in args if a != "--optional"])
+    lines = [l.split()[:2] for l in out.splitlines()]
+    c(["RA-08", "ERROR"] in lines and ["RA-09", "ERROR"] in lines, "an [areas] line switches its check on without --optional  <-- pinned defect")
     c("XLAYER-13" in out and "geometric side Right != parity side Left" in out and "XLAYER-05" in out, "the geometry checks run on GeoJSON lines and flag the point on the wrong side")
     c("RA-09" in out and "RA-09-BLANK" not in out and "INFO" in out, "the blank-CITY class is reported inside RA-09 at INFO")
     msag_ok = tmp.write("msag_ok.csv", HEADER + ",ELM,ST,,100,199,TESTVILLE,B,100\n")
@@ -222,10 +255,11 @@ def _geojson(h, tmp, ini):
     code, out, err = call(["--addresses", far, "--settings", ini])
     c(code == 2 and "not degrees" in err, "coordinates that are not degrees are refused unless --units says otherwise  <-- pinned defect")
     code, out, err = call(["--addresses", far, "--settings", ini, "--units", "feet"])
-    c(code == 1 and "ng911check" in out, "the same file runs with --units feet")
-    code, out, err = call(["--addresses", addr, "--settings", ini, "--units", "meters"])
+    c(code == 0 and "ng911check" in out, "the same file runs with --units feet")
+    badesn = tmp.write("badesn.geojson", collection(feature("Point", [-81.4995, 29.10015], A(Add_Number=101, HOUSE_NU="101", ESN="ABC"))))
+    code, out, err = call(["--addresses", badesn, "--settings", ini, "--units", "meters"])
     c(code == 1 and err == "", "--units meters runs")
-    code, out, err = call(["--addresses", addr, "--settings", ini, "--units", "degrees", "--out", tmp.path("g.csv"), "--apply"])
+    code, out, err = call(["--addresses", badesn, "--settings", ini, "--units", "degrees", "--out", tmp.path("g.csv"), "--apply"])
     row = [r for r in csv.reader(io.StringIO(text_of(tmp.path("g.csv"))))][1]
     c(code == 1 and len(row[-2].split(".")[1]) == 7 and row[-2].startswith("-81."), "findings on a degrees layer are written back in degrees with seven decimals")
 
@@ -236,9 +270,13 @@ def _geojson(h, tmp, ini):
     code, out, err = call(["--addresses", addr, "--streets", strt, "--settings", ini2, "--msag-config", cfg, "--out", tmp.path("msag.csv"), "--apply"])
     c(code == 64 and text_of(tmp.path("msag.csv")).startswith("PREFIX"),
       "--out onto the MSAG file named in the MSAG config is refused and the file is untouched  <-- pinned defect")
+    cfg_exc = tmp.write("msag_exc.json", json.dumps({"source_path": "msag.csv", "exceptions_path": "exc.csv"}))
+    code, out, err = call(["--addresses", addr, "--streets", strt, "--settings", ini2, "--msag-config", cfg_exc, "--out", tmp.path("exc.csv"), "--apply"])
+    c(code == 64 and text_of(tmp.path("exc.csv")).startswith("kind"),
+      "--out onto the exceptions file named only in the MSAG config is refused and the file is untouched")
 
     # ---- named coordinate columns and a pinned MSAG hash, through the command line
-    lonlat = csv_file(tmp, "lonlat.csv", reader.ADDRESS_COLUMNS + ("Lon", "Lat"), [dict(A(Add_Number=101, HOUSE_NU="101"), Lon=-81.4995, Lat=29.10015)])
+    lonlat = csv_file(tmp, "lonlat.csv", reader.ADDRESS_COLUMNS + ("Lon", "Lat"), [dict(A(Add_Number=101, HOUSE_NU="101", ESN="ABC"), Lon=-81.4995, Lat=29.10015)])
     code, out, err = call(["--addresses", lonlat, "--settings", ini, "--x-field", "Lon", "--y-field", "Lat", "--out", tmp.path("ll.csv"), "--apply"])
     ll_row = [r for r in csv.reader(io.StringIO(text_of(tmp.path("ll.csv"))))][1]
     c(code == 1 and err == "" and ll_row[-2] == "-81.4995000" and ll_row[-1] == "29.1001500", "--x-field and --y-field name the coordinate columns of a CSV layer")

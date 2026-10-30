@@ -543,7 +543,7 @@ def check_xlayer_06(addresses, streets, ctx):
 @registry.check(id="XLAYER-04", family=FAMILY.CROSS, severity=SEVERITY.ERROR,
                 priority="v1-core", target="both",
                 emits=(SEVERITY.ERROR,), summary="Flag an address whose street name no centerline carries.",
-                fields=("Add_Number", "PREFIX", "STREET_NA", "SUFFIX", "Site_NGUID", "TYPE",), requires=())
+                fields=("Add_Number", "PREFIX", "STREET_NA", "SUFFIX", "Site_NGUID", "TYPE",), requires=("streets",))
 def check_xlayer_04(addresses, streets, ctx):
     out = []
     for a in addresses:
@@ -785,7 +785,7 @@ def _side_ranges(s):
                 emits=(SEVERITY.INFO,), summary="Report a street segment that has an address range but no address point inside it.",
                 fields=("Add_Number", "FROMLEFT", "FROMRIGHT", "NAME", "PREFIX", "Parity_L",
                         "Parity_R", "RCL_NGUID", "SEGMENT_ID", "SUFFIX",
-                        "TOLEFT", "TORIGHT", "TYPE",), requires=())
+                        "TOLEFT", "TORIGHT", "TYPE",), requires=("addresses",))
 def check_xlayer_14(addresses, streets, ctx):
     """Addressable side range with no covering active address points."""
     out = []

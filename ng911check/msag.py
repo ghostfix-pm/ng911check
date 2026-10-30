@@ -50,6 +50,7 @@ DEFAULT_FIELD_MAP = {
 }
 
 SECONDS_PER_DAY = 86400
+ESN_MAX_DIGITS = 5   # the widest ESN ADDR-05 accepts
 
 
 @dataclass
@@ -367,7 +368,7 @@ def is_excepted(rec, exceptions, convention_only=False):
     convention_only is False (the MSAG-not-GIS direction).
     """
     # The pure-convention sentinel suppressions (ESN-999, 0-0 placeholder range,
-    # out-of-domain >3-digit pseudo-ESN) do NOT depend on a loaded exceptions file,
+    # 6+ digit pseudo-ESN) do NOT depend on a loaded exceptions file,
     # which is Optional; fall back to the standard 3-digit pad when it is absent.
     pad = exceptions.esn_pad_width if exceptions is not None else 3
     if rec.get("esn") == pad_esn(ESN_999, pad):
@@ -381,10 +382,10 @@ def is_excepted(rec, exceptions, convention_only=False):
     if _lo in (None, 0) and _hi in (None, 0) and (_lo == 0 or _hi == 0):
         return True
     # Non-geographic service pseudo-records (wireless or VoIP caller routing rows) can carry
-    # out-of-domain 4+ digit ESNs. A numeric ESN that is not esn_pad_width digits long can never
-    # match a GIS range and is not a coverable centerline defect.
+    # out-of-domain ESNs. ADDR-05 accepts one to five digits, so only a numeric ESN longer than
+    # that (and longer than the pad width) can never match a GIS range.
     esn = rec.get("esn", "")
-    if esn.isdigit() and len(esn) != pad:
+    if esn.isdigit() and len(esn) > max(pad, ESN_MAX_DIGITS):
         return True
     if exceptions is None or convention_only:
         return False   # data-driven suppressions need the exceptions file and are MSAG-direction only
@@ -678,7 +679,7 @@ def reconcile(msag_records, gis_records, exceptions=None, addr_index=None):
     runs = gis_runs(gis_records)
 
     for rec in msag_records:
-        # Convention-excluded records (ESN-999 sentinels, 4+ digit pseudo-ESNs,
+        # Convention-excluded records (ESN-999 sentinels, 6+ digit pseudo-ESNs,
         # by-name/permanent exceptions) are neither matches nor misses and must not
         # produce attr_mismatch or inflate the match denominator -- test first.
         if is_excepted(rec, exceptions):

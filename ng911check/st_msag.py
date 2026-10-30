@@ -105,7 +105,9 @@ def section(h):
         c(msag.is_excepted(g(1, 9, "B", esn="999"), None) and msag.is_excepted(g(1, 9, "B", esn="999"), exc), "is_excepted drops the ESN 999 convention with or without an exceptions file")
         c(msag.is_excepted(g(0, 0, "B"), None) and msag.is_excepted(g(None, 0, "B"), None) and not msag.is_excepted(g(None, None, "B"), None),
           "is_excepted drops an explicit 0-0 range and keeps a record with no range at all")
-        c(msag.is_excepted(g(1, 9, "B", esn="1234"), None) and not msag.is_excepted(g(1, 9, "B", esn="123"), None), "is_excepted drops a numeric ESN that is not the pad width")
+        c(msag.is_excepted(g(1, 9, "B", esn="123456"), None) and not msag.is_excepted(g(1, 9, "B", esn="123"), None), "is_excepted drops a numeric ESN longer than five digits")
+        c(not msag.is_excepted(g(1, 9, "B", esn="1234"), None) and not msag.is_excepted(g(1, 9, "B", esn="12345"), None),
+          "is_excepted keeps a four or five digit ESN, which ADDR-05 accepts  <-- pinned defect")
         c(msag.is_excepted(g(1, 9, "B", name="ALPHA ST"), exc) and msag.is_excepted(g(1, 9, "B", name="BETA ST", esn="200"), exc)
           and msag.is_excepted(g(1, 9, "B", name="GAMMA ST", esn="300"), exc) and not msag.is_excepted(g(1, 9, "B", name="DELTA ST"), exc),
           "is_excepted applies name, name-and-ESN and permanent rows and keeps anything else")

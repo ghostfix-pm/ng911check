@@ -10,6 +10,8 @@ from . import registry
 Result = namedtuple("Result", "records notices tally")
 
 _NEEDS = {
+    "addresses": "an address file (--addresses)",
+    "streets": "a street file (--streets)",
     "geometry": "street geometry (a GeoJSON streets file)",
     "msag": "an MSAG file (--msag)",
     "modifier_domains": "modifier domains (--domains with premod, postmod or pretypesep rows)",
@@ -99,6 +101,10 @@ DEGRADED_NOTICE = {
 def capabilities(ctx):
     """The set of things this run has, matched against CheckSpec.requires."""
     have = set()
+    if ctx.addresses:
+        have.add("addresses")
+    if ctx.streets:
+        have.add("streets")
     if ctx.geom_provider is not None:
         have.add("geometry")
     if ctx.msag_records is not None:
