@@ -9,6 +9,19 @@ from .model import SEVERITY
 _ORDER = {SEVERITY.ERROR: 0, SEVERITY.WARNING: 1, SEVERITY.INFO: 2}
 CSV_COLUMNS = ("check_id", "check_name", "family", "severity", "layer", "row", "nguid",
                "description", "x", "y")
+# Numbers stay numbers: the x of a western longitude starts with "-" and must read as a number,
+# so only the other columns take the formula guard.
+NUMERIC_COLUMNS = ("row", "x", "y")
+FORMULA_STARTS = ("=", "+", "-", "@", chr(9), chr(13))
+
+
+def cell(value):
+    """A text cell a spreadsheet will not run as a formula.
+
+    A cell that starts with =, +, -, @, tab or CR gets one leading apostrophe. This package
+    never reads its own findings file back, so nothing strips the apostrophe off again."""
+    text = str(value)
+    return "'" + text if text.startswith(FORMULA_STARTS) else text
 
 
 def ordered(records):
@@ -55,12 +68,17 @@ def to_rows(records, frame):
 
 
 def to_csv_text(rows):
-    """The rows as CSV text (RFC 4180 quoting, LF line ends), header first."""
+    """The rows as CSV text (RFC 4180 quoting, LF line ends), header first. Every text column
+    goes through cell(), so a value from the input cannot start a formula in a spreadsheet."""
     buf = io.StringIO()
     writer = csv.writer(buf, lineterminator="\n")
+    # The csv module of Python 3.9 and 3.10 leaves a bare CR unquoted when the line end is LF,
+    # so a cell that holds one would split its row. A row with a CR is written fully quoted.
+    quoted = csv.writer(buf, lineterminator="\n", quoting=csv.QUOTE_ALL)
     writer.writerow(CSV_COLUMNS)
     for row in rows:
-        writer.writerow([row[c] for c in CSV_COLUMNS])
+        cells = [row[c] if c in NUMERIC_COLUMNS else cell(row[c]) for c in CSV_COLUMNS]
+        (quoted if any(chr(13) in str(v) for v in cells) else writer).writerow(cells)
     return buf.getvalue()
 
 

@@ -246,6 +246,7 @@ def run(args):
                              "set the fields in the [areas] line or use --rename"
                              % (cid, ", ".join(absent)))
         reader.annotate_areas(addresses, areas[cid], ra.annotation_key(cid), frame)
+        ra.require_hits(cid, addresses, spec.path)
     street_geoms = geoms.get("streets") or {}
     extra = load_domain_csv(args.domains) if args.domains else None
     ctx = engine.build_context(

@@ -9,6 +9,10 @@ if the point is inside no polygon of that layer) under the key annotation_key(ch
 The comparison functions then take annotated row dicts and return ErrorRecord findings. They
 need no geometry library, so the self-test drives them with hand-made annotations.
 
+A polygon whose key is null or blank is not the same as no polygon: the runner annotates it
+with "", and a point inside it is reported once, as its own finding, instead of being compared.
+The runner also refuses a layer that no address point falls inside (require_hits).
+
 Comparisons are string-normalized via common._clean, which renders a numeric 4.0 as '4' so a
 stored zone '4' matches a polygon key 4.0. rollup() groups the same findings by (containing
 key, stored value) so an analyst fixes a whole zone at once instead of thousands of points.
@@ -52,6 +56,12 @@ CHECK_IDS = ("RA-01", "RA-02", "RA-03", "RA-08", "RA-09", "RA-10")
 # entry backlog, not a misroute, so it emits at INFO and answers to its own [severity] line.
 BLANK_ID = {"RA-09": "RA-09-BLANK"}
 
+# A polygon whose key is null or blank cannot say what a point inside it should hold. The
+# point is its own finding at ERROR, named by this suffix and by NULL_KEY_LABEL in the roll-up,
+# and no stored value is compared with it. Comparing would call a blank value "consistent".
+NULL_KEY_SUFFIX = ": polygon key is null"
+NULL_KEY_LABEL = "(null key)"
+
 
 def annotation_key(check_id):
     """The row key the runner fills with the containing polygon's key for this check."""
@@ -65,6 +75,24 @@ def resolve_rule(check_id, spec=None):
         return rule
     return rule._replace(fields=spec.fields or rule.fields,
                          sentinel=rule.sentinel if spec.sentinel is None else spec.sentinel)
+
+
+def require_hits(check_id, addresses, path):
+    """The number of address points that fall inside any polygon of this check's layer.
+
+    Raises ValueError when it is zero. With no hit every point reads as "outside", and a
+    blank stored value cannot be contradicted there, so a layer in the wrong coordinate system
+    would give zero findings and read as clean."""
+    annot = annotation_key(check_id)
+    hits = sum(1 for a in addresses if a.get(annot) is not None)
+    if hits:
+        return hits
+    placed = sum(1 for a in addresses if a.get("_XY") is not None)
+    raise ValueError("%s: none of the %d address point(s) with a position falls inside a "
+                     "polygon of %s, so the check judged nothing and a result with no finding "
+                     "would read as clean. Check that --units and the coordinate system of the polygon "
+                     "file match the address file, and that the polygon file is the right "
+                     "layer." % (check_id, placed, path))
 
 
 def required_fields(check_id, rule=None):
@@ -81,8 +109,8 @@ def _describe(field, stored, poly_val, inside, layer_label, sentinel):
     value is consistent with (or cannot be contradicted by) the containing polygon.
 
     stored/poly_val are already normalized (upper, _clean). inside is True when the point
-    is inside a polygon of this layer (poly_val may still be "" for a null-keyed polygon,
-    distinct from inside=False for 'inside no polygon'). sentinel is a stored value that
+    is inside a polygon of this layer (_iter_findings never passes a null-keyed polygon here:
+    it reports that class itself). sentinel is a stored value that
     legitimately means 'outside every polygon of this layer'; None disables it.
 
     is_blank_inside marks the "field is empty but the point IS inside a polygon" class. It is
@@ -108,21 +136,29 @@ def _describe(field, stored, poly_val, inside, layer_label, sentinel):
 
 
 def _iter_findings(addresses, check_id, rule=None):
-    """Yield (row, field, stored, containing_key_or_None, description, is_blank_inside) for
-    each finding of this check. Shared by the ErrorRecord builders and rollup() so both use one
-    comparison."""
+    """Yield (row, field, stored, containing_key_or_None, description, is_blank_inside,
+    is_null_key) for each finding of this check. Shared by the ErrorRecord builders and
+    rollup() so both use one comparison.
+
+    A point inside a polygon whose key is null or blank yields ONE finding for the row, with
+    is_null_key True and the fields joined in `field`: no stored value is compared."""
     rule = rule or DEFAULT_RULES[check_id]
     annot = annotation_key(check_id)
     for a in addresses:
+        poly_key = a.get(annot)
+        inside = poly_key is not None
+        poly_val = _clean(poly_key).upper()
+        if inside and poly_val == "":
+            yield (a, ", ".join(rule.fields), "", NULL_KEY_LABEL,
+                   "point is inside a polygon of the %s layer whose key is null or blank, so %s cannot be "
+                   "checked" % (rule.layer_label, ", ".join(rule.fields)), False, True)
+            continue
         for field in rule.fields:
-            poly_key = a.get(annot)
-            inside = poly_key is not None
             stored = _clean(a.get(field)).upper()
-            poly_val = _clean(poly_key).upper()
             desc, blank = _describe(field, stored, poly_val, inside, rule.layer_label,
                                     rule.sentinel)
             if desc is not None:
-                yield a, field, stored, (poly_val if inside else None), desc, blank
+                yield a, field, stored, (poly_val if inside else None), desc, blank, False
 
 
 def _check(addresses, check_id, severity=SEVERITY.ERROR, blank_severity=None, rule=None):
@@ -134,9 +170,11 @@ def _check(addresses, check_id, severity=SEVERITY.ERROR, blank_severity=None, ru
     RA-09) means the whole check emits at one severity."""
     rule = rule or DEFAULT_RULES[check_id]
     out = []
-    for a, _field, _stored, _poly, desc, blank in _iter_findings(addresses, check_id, rule):
+    for a, _field, _stored, _poly, desc, blank, null_key in _iter_findings(addresses, check_id,
+                                                                           rule):
         tiered = blank and blank_severity is not None
-        out.append(ErrorRecord(check_id, rule.name, FAMILY.AREA,
+        out.append(ErrorRecord(check_id, rule.name + (NULL_KEY_SUFFIX if null_key else ""),
+                               FAMILY.AREA,
                                blank_severity if tiered else severity, "address",
                                a["_OID"], a.get("Site_NGUID", "") or "", desc, a.get("_XY"),
                                BLANK_ID[check_id] if tiered else None))
@@ -198,7 +236,7 @@ def rollup(addresses, check_ids=CHECK_IDS, sample=5, rules=None):
     rules = rules or {}
     groups = defaultdict(lambda: {"count": 0, "oids": []})
     for cid in check_ids:
-        for a, field, stored, poly_val, _desc, _blank in _iter_findings(
+        for a, field, stored, poly_val, _desc, _blank, _null in _iter_findings(
                 addresses, cid, rules.get(cid)):
             key = (cid, field, poly_val if poly_val is not None else "(outside all)", stored)
             g = groups[key]

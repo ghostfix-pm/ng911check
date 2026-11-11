@@ -306,6 +306,9 @@ def finalize_layer(layer, frame):
 def annotate_areas(addresses, areas, key, frame):
     """Set row[key] to the key of the first area that contains the address, else None.
 
+    A polygon whose key is null or blank sets "" (inside, key unknown), never None, so a
+    point inside it is not mistaken for a point outside every polygon.
+
     A point on a polygon edge is not defined, and a point in two overlapping polygons takes
     the first in file order. Both are topology defects this package does not judge."""
     planar = [(k, [[frame.forward(x, y) for x, y in ring] for ring in rings])
@@ -316,5 +319,5 @@ def annotate_areas(addresses, areas, key, frame):
             continue
         for k, rings in planar:
             if point_in_polygon(row["_XY"][0], row["_XY"][1], rings):
-                row[key] = k
+                row[key] = k if k is not None and str(k).strip() else ""
                 break

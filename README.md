@@ -145,32 +145,47 @@ PASS  an address file with no X and Y columns says the three checks judged nothi
 ...
 PASS  an MSAG config error is exit 2 and reads: quoted.json: max_source_age_days must be a whole number of days, or null  <-- pinned defect
 ...
+PASS  a point inside a polygon with a null key is reported as its own finding, not as a mismatch  <-- pinned defect
+...
+PASS  a polygon layer that no address falls inside exits 2, prints no report and writes nothing  <-- pinned defect
+...
+PASS  to_csv_text prefixes one apostrophe to the nguid column when it starts with tab  <-- pinned defect
+...
+PASS  a CR inside a cell keeps its row whole on every Python version, because the row is written fully quoted  <-- pinned defect
+...
+PASS  a Site_NGUID that starts with = + - @ tab or CR reaches the findings file with one apostrophe in front  <-- pinned defect
+...
 --------------------------------------------------------------------
-883 assertions, 0 failed
+964 assertions, 0 failed
 ```
 
-The full run prints all 883 assertions. Each `...` line above is where the block is cut.
+The full run prints all 964 assertions. Each `...` line above is where the block is cut.
 `python -m ng911check --self-test` exits 0 when every assertion passes and 1 when one fails.
 
 | Host | Python | Assertions |
 |---|---|---|
-| Windows | 3.13.2 | 883 assertions, 0 failed |
-| Windows | 3.12.10 | 883 assertions, 0 failed |
-| Windows | 3.11.15 | 883 assertions, 0 failed |
-| Windows | 3.10.20 | 883 assertions, 0 failed |
-| Windows | 3.9.25 | 883 assertions, 0 failed |
-| Ubuntu | 3.12.3 | 883 assertions, 0 failed |
+| Windows | 3.13.2 | 964 assertions, 0 failed |
+| Windows | 3.12.10 | 964 assertions, 0 failed |
+| Windows | 3.11.15 | 964 assertions, 0 failed |
+| Windows | 3.10.20 | 964 assertions, 0 failed |
+| Windows | 3.9.25 | 964 assertions, 0 failed |
+| Ubuntu | 3.12.3 | 964 assertions, 0 failed |
 
 The Windows 3.9, 3.10 and 3.11 rows run on uv-managed builds of CPython. The self-test also parses
-every source file with `feature_version=(3, 9)` and fails on an f-string. The Ubuntu row is 3.12.3 only.
+every source file with `feature_version=(3, 9)`. A separate assertion walks the syntax tree and
+fails on an f-string, because the parse alone accepts one. The Ubuntu row is 3.12.3 only.
 
 The counts are equal on every host because the self-test never branches on the platform. It writes
 its files to a temporary folder and removes the folder at the end.
 
-`coverage run --branch -m ng911check --self-test` (coverage 7.16.1) reports 100 percent of 4946
-statements and 1472 branches for the whole package, the test modules included. One line carries a
+`coverage run --branch -m ng911check --self-test` (coverage 7.16.1) reports 100 percent of 5097
+statements and 1488 branches for the whole package, the test modules included. One line carries a
 `pragma: no branch`. It is the loop in `Polyline.midpoint` in `geometry.py`. That loop never ends
-normally, because its last segment always returns. Branch coverage cannot see that.
+normally, because its last segment always returns. Branch coverage cannot see that. The reader
+refuses a line part with fewer than two positions, so a `Polyline` built in code with a one-vertex
+part is the only way to make `midpoint` return `None`. The production modules alone, without the
+`st_*.py` test modules and `selftest.py`, also reach 100 percent of 3056 statements and 1432
+branches.
 
 ## What already exists
 
@@ -284,7 +299,7 @@ one of those files. The guard compares file identity, so a hard link to an input
 run leaves that file as it was.
 
 Exit codes: 0 no ERROR finding, 1 at least one ERROR after the overrides, 2 an input or settings
-file was refused or could not be read, 64 usage error, 70 an unexpected crash. A crash never
+file was refused or could not be read, or a polygon layer holds no address point, 64 usage error, 70 an unexpected crash. A crash never
 reads as a finding.
 
 In the runs below, `ARGS` stands for `--addresses demo/addresses.csv --streets demo/streets.csv --settings demo/agency.ini --units feet`.
@@ -313,6 +328,17 @@ $ echo $?
 ```
 
 On a refused run the parser also prints its usage block. This file cuts that block.
+
+A text cell of the `--out` CSV that starts with `=`, `+`, `-`, `@`, a tab or a carriage return gets
+one apostrophe in front, so a spreadsheet does not read an input value as a formula. The guard
+covers `check_id`, `check_name`, `family`, `severity`, `layer`, `nguid` and `description`. The
+`row`, `x` and `y` columns are numbers and are never prefixed, so a western longitude such as
+`-30.4995000` stays a number. A row that holds a carriage return is written with every cell
+quoted. The `csv` module of Python 3.9 and 3.10 leaves a bare carriage return unquoted when the
+line end is LF, and that would split the row in two. The `--format json` file is not guarded, because
+a spreadsheet does not open JSON. This package never reads its own findings file back, so it has
+no code that strips the apostrophe. The self-test fails if a reader module starts to use the
+report module.
 
 ## Inputs
 
@@ -377,6 +403,23 @@ each line can do, and after the run, what each line did. The self-test pins this
 `RA-09` has a second class, a blank CITY inside a postal-city polygon. That class is a data-entry
 backlog and not a misroute, so it is reported at INFO and answers to its own line, `RA-09-BLANK`.
 A wrong CITY stays at ERROR.
+
+Two rules keep a polygon layer from giving a false clean result.
+
+- A polygon whose key is null, empty or only spaces cannot say what a point inside it should hold.
+  A point inside it is reported once, as its own finding, at ERROR. The check name ends with
+  `: polygon key is null`, and the description says which fields could not be checked. The stored
+  value is not compared, so a blank value is not read as "consistent". The response-area roll-up
+  lists these points under `(null key)`. Before this rule, a point inside a polygon with a null
+  key was read as "inside no polygon". A filled ESN was reported as `point not inside any ESN
+  area`, which names the wrong defect, and a blank ESN was not reported at all. A key that was
+  empty or only spaces was reported before as a mismatch with a containing area named `''`.
+- A polygon layer that no address point falls inside is refused with exit 2, and the run prints
+  no report and writes nothing. With no hit, every point reads as "outside". A blank stored value
+  cannot be contradicted there, so a layer in the wrong coordinate system, or the wrong layer, gave
+  no response-area finding at all, so a run with no other ERROR exited 0. The refusal counts a point inside a null-keyed polygon, and a polygon
+  keyed `0`, as a hit. An empty polygon layer, and an address file with no X and Y, are refused
+  the same way. There is no flag to switch the refusal off.
 
 ## The MSAG numbers
 
@@ -633,6 +676,15 @@ This package relies on no Esri, SQL Server, PROJ, FEMA or Census behaviour. It n
 - The IUGG mean radius R1 of 6371008.7714 m, rounded in the code to 6371008.8 m, from the table on the
   [Earth radius](https://en.wikipedia.org/wiki/Earth_radius) page.
 
+- [OWASP, CSV Injection](https://owasp.org/www-community/vulnerabilities/CSV_Injection) names the
+  characters that start a formula: `=`, `+`, `-`, `@`, tab (0x09) and carriage return (0x0D). It
+  advises a single quote in front of the cell. I took the character list and the fix from that
+  page and did not run a spreadsheet. The self-test pins the prefix on every text column and on
+  every one of the six characters.
+- I observed, and did not read in the Python documentation, that the `csv` writer of Python 3.9.25
+  and 3.10.20 leaves a carriage return inside a cell unquoted when `lineterminator` is a line feed,
+  and that 3.11.15, 3.12 and 3.13 quote it. The self-test pins the result on every host in the table.
+
 Not verified: that an address range runs with the drawing direction of the line, FROM at the first
 vertex. STREET-14 assumes it, and I did not read a standard that says so. Where a road is numbered in
 opposite directions on purpose, a finding is wrong and `[checks] STREET-14 = off` removes it.
@@ -677,10 +729,18 @@ ESN rule in ADDR-05, one to five digits and not zero, is also a local choice.
 - The MSAG source age comes from the file modification time. A freshly copied or downloaded MSAG reads as 0 days old.
 - A non-numeric MSAG `LOW` or `HIGH` value, for example `1,000` or `1O1`, is read as blank. The record then shows up as `gap-with-no-address`, and the report never names the real cause.
 - A CSV that is not UTF-8, for example Windows-1252 or the UTF-16 "Unicode text" format of Excel, is refused with exit 2. The message does not name the file or say to save it as UTF-8.
-- The `--out` CSV writes input values as they are. A `Site_NGUID` that starts with `=`, `+`, `-` or `@` is a formula when a spreadsheet opens the findings file. Open the file as text.
+- The `--out` CSV guard follows the OWASP advice (see "What was verified against documentation"). I did not open a findings file in Excel, LibreOffice or Google Sheets, so I did not observe how each one shows the leading apostrophe. Excel may show it as part of the text. A cell that already starts with an apostrophe is left as it is. A formula character in the middle of the text is not changed, because a spreadsheet does not run it.
+- The zero-hit refusal tests only whether any point lands in the layer. A layer that covers only part of the county passes when one address falls inside it. A point outside every polygon of such a layer still counts as `not inside any`, so use a polygon layer that covers the whole address file.
+- A point inside a null-keyed polygon and a keyed polygon at once takes the first polygon in the file. If the null-keyed polygon comes first, the point is reported as a null key. If it comes second, the point is compared with the keyed polygon and the null key is not reported.
+- A polygon feature that lacks the key property, rather than holding null, refuses the whole run with exit 2 and is not reported as a null-key finding.
+- A polygon key written as the text `NULL`, `<Null>`, `None` or `nan` counts as a real key. A point inside it gets the ordinary `ESN is blank but point is inside ESN area` finding, not the null-key finding.
+- A layer named in `[areas]` is checked for hits even when its check is off in `[checks]`, so remove the `[areas]` line as well.
+- The `--out` CSV guard looks at the first character only. A cell that starts with a space or a line feed before `=`, `+`, `-` or `@` is not prefixed, because OWASP names only the six listed first characters. The guard applies to the `--out` CSV only. The text report and the JSON file are never guarded.
+- An error message for a bad settings or MSAG config value quotes that value. The tool never asks for a credential, but a secret typed into such a field would reach the terminal.
+- The self-test removes its temporary folder with `ignore_errors=True`. A locked folder on Windows stays behind without a message.
 - Column names are matched with their exact case. A file with lowercase headers gets a missing-column notice and many blank-field errors, such as `DiscrpAgID None invalid`, instead of one clear message.
 - A CSV row with more cells than the header is read with the extra cells dropped, and no notice is printed. An unquoted comma inside a value hides the shift, so quote values that contain commas.
-- Rows without a geometry, a GeoJSON feature with null geometry or a CSV row without X and Y, are left out of the distance and side checks. XLAYER-17, XLAYER-18, XLAYER-19 and STREET-14 count them in a notice. The other checks do not count them, and the response-area checks call such a row `not inside any` polygon.
+- Rows without a geometry, a GeoJSON feature with null geometry or a CSV row without X and Y, are left out of the distance and side checks. XLAYER-17, XLAYER-18, XLAYER-19 and STREET-14 count them in a notice. The other checks do not count them, and the response-area checks call such a row `not inside any` polygon. A run in which no address row has a position is refused for any `[areas]` line.
 - In a feet or meters run, a position of 0, 0 is a real position. In a degrees run any other stand-in value that lies inside the degree range, such as -1, -1, is read as a real position.
 - Swapped longitude and latitude inside the degree range cannot be detected. The run gives no error and no notice.
 - An address far from its street is reported at INFO by XLAYER-05 when its number falls inside a range of a same-name segment. INFO never changes the exit code, even with `--optional`.
