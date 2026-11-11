@@ -3,11 +3,11 @@ import csv
 import io
 import os
 
-from . import reader, report, response_area_checks as ra
+from . import geometry, reader, report, response_area_checks as ra
 from .geometry import Frame
 from .selftest import Tmp
-from .st_cli import INI, call, collection, csv_file, feature
-from .st_fix import A, AG
+from .st_cli import HEADER, INI, LINE, call, collection, csv_file, feature
+from .st_fix import A, AG, S
 from .st_io import SQUARE
 
 BOX = [[-30.501, 29.099], [-30.498, 29.099], [-30.498, 29.101], [-30.501, 29.101], [-30.501, 29.099]]
@@ -90,6 +90,12 @@ def _zero_hits(h):
     c(ra.require_hits("RA-08", [_in(0, ESN="")], "esn.geojson") == 1, "a polygon keyed 0 is a hit")
     for label, rows in (("no point inside", [outside]), ("no address row", []), ("no position", [A()])):
         h.raises(lambda r=rows: ra.require_hits("RA-08", r, "esn.geojson"), "require_hits refuses a layer with %s  <-- pinned defect" % label)
+    c(geometry.require_street_overlap([(5.0, 5.0)], [geometry.Polyline([[(0.0, 0.0), (10.0, 0.0)]])], "s") == 1
+      and geometry.require_street_overlap([None], [geometry.Polyline([[(0.0, 0.0), (10.0, 0.0)]])], "s") == 0,
+      "require_street_overlap counts a point near the street and does not judge a run with no positioned point")
+    h.raises(lambda: geometry.require_street_overlap([(9000.0, 0.0)], [geometry.Polyline([[(0.0, 0.0), (10.0, 0.0)]])], "s"),
+                 "require_street_overlap refuses a point more than a mile from the street extent  <-- pinned defect")
+    c(geometry.require_street_overlap([(5280.0, 5280.0)], [geometry.Polyline([[(0.0, 0.0), (10.0, 0.0)]])], "s") == 1, "a point exactly a mile from the street extent counts as a hit")
 
 
 def _guard(c):
@@ -177,3 +183,25 @@ def _cli(c, tmp):
     c(all(not r[5].startswith("'") and not r[8].startswith("'") and not r[9].startswith("'") for r in body[1:]), "row, x and y stay unprefixed in the findings file")
     code, out, err = call(["--addresses", addr, "--settings", plain, "--units", "feet", "--out", tmp.path("inj.json"), "--apply", "--format", "json"])
     c(code == 1 and "\"=id@" in _read(tmp.path("inj.json")), "the json findings file keeps the raw value, because json is not opened as a spreadsheet")
+
+    # ---- a street layer that no address is near is refused, and so is an MSAG with nothing to compare
+    near = tmp.write("near.geojson", collection(feature("LineString", LINE, S(SEGMENT_ID=1, RCL_NGUID="RCL1@" + AG))))
+    far = tmp.write("far.geojson", collection(feature("LineString", [[-20.5, 29.1], [-20.499, 29.1]], S(SEGMENT_ID=1, RCL_NGUID="RCL1@" + AG))))
+    plain = tmp.write("plain.ini", INI)
+    code, out, err = call(["--addresses", addr_100, "--streets", near, "--settings", plain])
+    c(err == "" and code in (0, 1), "a street layer next to the address points runs")
+    before = sorted(os.listdir(tmp.root))
+    code, out, err = call(["--addresses", addr_100, "--streets", far, "--settings", plain, "--out", tmp.path("s.csv"), "--apply"])
+    c(code == 2 and "none of the 1 address point(s) with a position lies within the extent of the street geometry in " in err and "far.geojson" in err
+      and out == "" and sorted(os.listdir(tmp.root)) == before,
+      "a street layer that no address is near exits 2, prints no report and writes nothing  <-- pinned defect")
+    exc_all = tmp.write("exc_all.csv", "kind,community,prefix,street,type,suffix,esn\nname,,,ELM,ST,,\n")
+    msag_one = tmp.write("msag_one.csv", HEADER + ",ELM,ST,,100,199,TESTVILLE,B,100\n")
+    msag_none = tmp.write("msag_none.csv", HEADER)
+    for label, extra in (("a header-only file", ["--msag", msag_none]), ("every record excepted", ["--msag", msag_one, "--msag-exceptions", exc_all])):
+        before = sorted(os.listdir(tmp.root))
+        code, out, err = call(["--addresses", addr_100, "--streets", near, "--settings", plain, "--out", tmp.path("m.csv"), "--apply"] + extra)
+        c(code == 2 and "no MSAG record is eligible (" in err and "would read as clean" in err and out == "" and sorted(os.listdir(tmp.root)) == before,
+          "an MSAG with %s and so no eligible record exits 2, prints no report and writes nothing  <-- pinned defect" % label)
+    code, out, err = call(["--addresses", addr_100, "--streets", near, "--settings", plain, "--msag", msag_one])
+    c(err == "" and "MSAG match rate 100.00% (matched 1/1 eligible)" in out, "an MSAG with an eligible record still runs")

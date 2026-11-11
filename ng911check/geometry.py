@@ -127,6 +127,32 @@ class Polyline(object):
             run += seg
 
 
+STREET_EXTENT_MARGIN_FT = 5280.0
+
+
+def require_street_overlap(points, lines, path):
+    """The number of points inside the bounding box of every street vertex, widened by a mile.
+
+    Raises ValueError when points exist and none is inside. A street layer in another
+    coordinate system puts every point far from every line, so XLAYER-17, XLAYER-18 and
+    XLAYER-19 would judge nothing and zero findings would read as clean. Returns 0 without
+    raising when no point has a position, because there is nothing to compare."""
+    verts = [v for line in lines for part in line.parts for v in part]
+    xs = [v[0] for v in verts]
+    ys = [v[1] for v in verts]
+    m = STREET_EXTENT_MARGIN_FT
+    lox, hix, loy, hiy = min(xs) - m, max(xs) + m, min(ys) - m, max(ys) + m
+    placed = [p for p in points if p is not None]
+    hits = sum(1 for x, y in placed if lox <= x <= hix and loy <= y <= hiy)
+    if placed and not hits:
+        raise ValueError("none of the %d address point(s) with a position lies within the "
+                         "extent of the street geometry in %s, so the street checks judged "
+                         "nothing and a result with no finding would read as clean. Check that "
+                         "--units and the coordinate system of the street file match the "
+                         "address file." % (len(placed), path))
+    return hits
+
+
 def _part_length(part):
     return sum(math.hypot(x2 - x1, y2 - y1) for (x1, y1), (x2, y2) in zip(part, part[1:]))
 

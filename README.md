@@ -149,6 +149,10 @@ PASS  a point inside a polygon with a null key is reported as its own finding, n
 ...
 PASS  a polygon layer that no address falls inside exits 2, prints no report and writes nothing  <-- pinned defect
 ...
+PASS  a street layer that no address is near exits 2, prints no report and writes nothing  <-- pinned defect
+...
+PASS  an MSAG with a header-only file and so no eligible record exits 2, prints no report and writes nothing  <-- pinned defect
+...
 PASS  to_csv_text prefixes one apostrophe to the nguid column when it starts with tab  <-- pinned defect
 ...
 PASS  a CR inside a cell keeps its row whole on every Python version, because the row is written fully quoted  <-- pinned defect
@@ -156,20 +160,20 @@ PASS  a CR inside a cell keeps its row whole on every Python version, because th
 PASS  a Site_NGUID that starts with = + - @ tab or CR reaches the findings file with one apostrophe in front  <-- pinned defect
 ...
 --------------------------------------------------------------------
-964 assertions, 0 failed
+972 assertions, 0 failed
 ```
 
-The full run prints all 964 assertions. Each `...` line above is where the block is cut.
+The full run prints all 972 assertions. Each `...` line above is where the block is cut.
 `python -m ng911check --self-test` exits 0 when every assertion passes and 1 when one fails.
 
 | Host | Python | Assertions |
 |---|---|---|
-| Windows | 3.13.2 | 964 assertions, 0 failed |
-| Windows | 3.12.10 | 964 assertions, 0 failed |
-| Windows | 3.11.15 | 964 assertions, 0 failed |
-| Windows | 3.10.20 | 964 assertions, 0 failed |
-| Windows | 3.9.25 | 964 assertions, 0 failed |
-| Ubuntu | 3.12.3 | 964 assertions, 0 failed |
+| Windows | 3.13.2 | 972 assertions, 0 failed |
+| Windows | 3.12.10 | 972 assertions, 0 failed |
+| Windows | 3.11.15 | 972 assertions, 0 failed |
+| Windows | 3.10.20 | 972 assertions, 0 failed |
+| Windows | 3.9.25 | 972 assertions, 0 failed |
+| Ubuntu | 3.12.3 | 972 assertions, 0 failed |
 
 The Windows 3.9, 3.10 and 3.11 rows run on uv-managed builds of CPython. The self-test also parses
 every source file with `feature_version=(3, 9)`. A separate assertion walks the syntax tree and
@@ -178,13 +182,13 @@ fails on an f-string, because the parse alone accepts one. The Ubuntu row is 3.1
 The counts are equal on every host because the self-test never branches on the platform. It writes
 its files to a temporary folder and removes the folder at the end.
 
-`coverage run --branch -m ng911check --self-test` (coverage 7.16.1) reports 100 percent of 5097
-statements and 1488 branches for the whole package, the test modules included. One line carries a
+`coverage run --branch -m ng911check --self-test` (coverage 7.16.1) reports 100 percent of 5133
+statements and 1496 branches for the whole package, the test modules included. One line carries a
 `pragma: no branch`. It is the loop in `Polyline.midpoint` in `geometry.py`. That loop never ends
 normally, because its last segment always returns. Branch coverage cannot see that. The reader
 refuses a line part with fewer than two positions, so a `Polyline` built in code with a one-vertex
 part is the only way to make `midpoint` return `None`. The production modules alone, without the
-`st_*.py` test modules and `selftest.py`, also reach 100 percent of 3056 statements and 1432
+`st_*.py` test modules and `selftest.py`, also reach 100 percent of 3072 statements and 1438
 branches.
 
 ## What already exists
@@ -420,6 +424,12 @@ Two rules keep a polygon layer from giving a false clean result.
   no response-area finding at all, so a run with no other ERROR exited 0. The refusal counts a point inside a null-keyed polygon, and a polygon
   keyed `0`, as a hit. An empty polygon layer, and an address file with no X and Y, are refused
   the same way. There is no flag to switch the refusal off.
+- A street layer that holds geometry, with no address point inside its bounding box widened by one
+  mile (5,280 ft), is refused the same way, with exit 2, no report and no file written. Without it
+  XLAYER-17, XLAYER-18 and XLAYER-19 judged nothing for a street file in another coordinate
+  system, and the run exited 0. A street file in CSV form has no geometry and is not tested.
+- An MSAG with no eligible record, because the file has no data rows or every record is excepted,
+  is refused with exit 2, no report and no file written. Its 100 percent rate compared nothing.
 
 ## The MSAG numbers
 
@@ -676,11 +686,15 @@ This package relies on no Esri, SQL Server, PROJ, FEMA or Census behaviour. It n
 - The IUGG mean radius R1 of 6371008.7714 m, rounded in the code to 6371008.8 m, from the table on the
   [Earth radius](https://en.wikipedia.org/wiki/Earth_radius) page.
 
-- [OWASP, CSV Injection](https://owasp.org/www-community/vulnerabilities/CSV_Injection) names the
+- [OWASP, CSV Injection](https://owasp.org/www-community/attacks/CSV_Injection) lists the
   characters that start a formula: `=`, `+`, `-`, `@`, tab (0x09) and carriage return (0x0D). It
-  advises a single quote in front of the cell. I took the character list and the fix from that
-  page and did not run a spreadsheet. The self-test pins the prefix on every text column and on
-  every one of the six characters.
+  also lists line feed (0x0A) and the full-width forms of `=`, `+`, `-` and `@`, and it advises a
+  single quote in front of the cell. I read that page on 2026-11-11 (the address answers with a
+  redirect to community.owasp.org, which returned 200). The tool guards the six characters named
+  first and the single quote only. It does not guard the line feed or the full-width forms, and I
+  did not run a spreadsheet. The self-test pins the prefix on every text column and on every one
+  of the six characters. The older address `/www-community/vulnerabilities/CSV_Injection` returned
+  404 on the same day.
 - I observed, and did not read in the Python documentation, that the `csv` writer of Python 3.9.25
   and 3.10.20 leaves a carriage return inside a cell unquoted when `lineterminator` is a line feed,
   and that 3.11.15, 3.12 and 3.13 quote it. The self-test pins the result on every host in the table.
@@ -725,7 +739,8 @@ ESN rule in ADDR-05, one to five digits and not zero, is also a local choice.
 - The saint names that XLAYER-10 expands (`ST BENEDICT` to `SAINT BENEDICT`) are a closed list in
   the code. Add a name there for a new saint road.
 - A match rate below the floor is only an INFO line (`BELOW FLOOR`), and an INFO metric line cannot be escalated. A run with a 33 percent MSAG match rate and no GIS-side ERROR exits 0. The exit code never reflects `min_match_rate`.
-- An MSAG with no eligible record, because every record is excepted or the file has no data rows, prints a 100 percent rate over 0 records. Only a WARNING says that nothing was compared, so the run exits 0.
+- The refusal for an MSAG with no eligible record applies to a run that loads an MSAG. The `XLAYER-16` check itself, called from code, still reports a 100 percent rate over 0 records with a WARNING.
+- The street-layer refusal tests only whether any address lies within a mile of the extent of the street geometry. A street file in the wrong coordinate system that still overlaps that extent passes, and a street layer that covers only part of the county passes.
 - The MSAG source age comes from the file modification time. A freshly copied or downloaded MSAG reads as 0 days old.
 - A non-numeric MSAG `LOW` or `HIGH` value, for example `1,000` or `1O1`, is read as blank. The record then shows up as `gap-with-no-address`, and the report never names the real cause.
 - A CSV that is not UTF-8, for example Windows-1252 or the UTF-16 "Unicode text" format of Excel, is refused with exit 2. The message does not name the file or say to save it as UTF-8.
@@ -735,7 +750,7 @@ ESN rule in ADDR-05, one to five digits and not zero, is also a local choice.
 - A polygon feature that lacks the key property, rather than holding null, refuses the whole run with exit 2 and is not reported as a null-key finding.
 - A polygon key written as the text `NULL`, `<Null>`, `None` or `nan` counts as a real key. A point inside it gets the ordinary `ESN is blank but point is inside ESN area` finding, not the null-key finding.
 - A layer named in `[areas]` is checked for hits even when its check is off in `[checks]`, so remove the `[areas]` line as well.
-- The `--out` CSV guard looks at the first character only. A cell that starts with a space or a line feed before `=`, `+`, `-` or `@` is not prefixed, because OWASP names only the six listed first characters. The guard applies to the `--out` CSV only. The text report and the JSON file are never guarded.
+- The `--out` CSV guard looks at the first character only. A cell that starts with a space or a line feed before `=`, `+`, `-` or `@` is not prefixed, and neither is a cell that starts with a full-width `=`, `+`, `-` or `@`. The OWASP page lists the line feed and the full-width forms as formula starters, and this tool follows the six characters of its specification. The OWASP page also says the single-quote prefix is not reliable in Excel after the CSV is saved and opened again, and it advises a tab character inside the quoted field. This tool uses the quote. The guard applies to the `--out` CSV only. The text report and the JSON file are never guarded.
 - An error message for a bad settings or MSAG config value quotes that value. The tool never asks for a credential, but a secret typed into such a field would reach the terminal.
 - The self-test removes its temporary folder with `ignore_errors=True`. A locked folder on Windows stays behind without a message.
 - Column names are matched with their exact case. A file with lowercase headers gets a missing-column notice and many blank-field errors, such as `DiscrpAgID None invalid`, instead of one clear message.
@@ -749,6 +764,8 @@ ESN rule in ADDR-05, one to five digits and not zero, is also a local choice.
 - ADDR-08 says `missing house number` for an alphanumeric number such as `12A`. The number is present but not numeric.
 - With `--apply` the tool writes `OUT.tmp` first and then renames it onto `OUT`. An input file named `OUT.tmp` is refused. Any other file under that name is overwritten without warning. A failed rename, for example `--out` naming a folder, leaves `OUT.tmp` behind.
 - The `--out` guard compares file identity for names that exist and resolved paths for a name that does not exist yet. A hard link, a symbolic link and a different case on Windows are caught. An 8.3 short name and a long-path prefix (the `?` form) are not exercised: the volume I tested on has no short names, and the prefix works on Windows only.
+- The `--out` check compares file identity. A network or copy-on-write file system that reports a different identity for one file would not be caught.
+- Branch coverage was measured on Windows with Python 3.13 only. The Linux and the Python 3.9 to 3.12 rows were run for the self-test count only.
 - The Earth radius and the length of a degree are cited to Wikipedia pages, not to an official source such as IUGG or NIMA TR8350.2.
 - XLAYER-17 does not report two adjacent mis-numbered houses, because each one's neighbour disagrees with the direction. In the numbers 101, 103, 105, 107, 121, 125, 109, 111, 113, 115 it gives no finding, and with 125 removed it reports 121, when the houses are 100 ft apart and the displacement limit is 0.
 - XLAYER-17 never reports the first or the last house on a side. A number out of order by less than `oo_min_displacement_ft` (default 150 ft) is also kept quiet.

@@ -15,7 +15,7 @@ import traceback
 from . import __version__, catalog, engine, msag, reader, report, settings as settings_mod
 from . import response_area_checks as ra
 from .crosswalks import load_crosswalks, load_domain_csv
-from .geometry import UNITS, Frame, fits_degrees
+from .geometry import UNITS, Frame, fits_degrees, require_street_overlap
 
 EXIT_OK, EXIT_ERRORS, EXIT_INPUT, EXIT_USAGE, EXIT_CRASH = 0, 1, 2, 64, 70
 KPI_NAMES = ("MSAG match-rate KPI", "MSAG exact-tuple KPI", "MSAG source age")
@@ -248,6 +248,9 @@ def run(args):
         reader.annotate_areas(addresses, areas[cid], ra.annotation_key(cid), frame)
         ra.require_hits(cid, addresses, spec.path)
     street_geoms = geoms.get("streets") or {}
+    if street_geoms and addresses:
+        require_street_overlap([a["_XY"] for a in addresses], street_geoms.values(),
+                               layers["streets"].path)
     extra = load_domain_csv(args.domains) if args.domains else None
     ctx = engine.build_context(
         addresses, streets, crosswalks=load_crosswalks(extra), settings=st,
@@ -257,6 +260,12 @@ def run(args):
     mcfg = _msag_config(args)
     engine.build_msag_context(ctx, mcfg)
     result = engine.run_report(addresses, streets, ctx, include_optional=args.optional)
+    if ctx.msag_result is not None and ctx.msag_result["counts"]["eligible"] == 0:
+        raise ValueError("no MSAG record is eligible (%d read, %d excepted), so the match rate "
+                         "compared nothing and a result with no finding would read as clean. "
+                         "Check the MSAG file, its column mapping and the exceptions file."
+                         % (ctx.msag_result["counts"]["msag_total"],
+                            ctx.msag_result["counts"]["excepted"]))
     notices.extend(result.notices)
     inputs = ["%s: %s (%d rows)" % (n, layers[n].path, len(layers[n].rows)) for n in layers]
     inputs.append("units: %s" % args.units)
