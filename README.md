@@ -160,20 +160,20 @@ PASS  ADDR-05 declares exactly the columns it reads
 PASS  the package folder holds Python files only, so no vendor domain file ships  <-- pinned defect
 ...
 --------------------------------------------------------------------
-972 assertions, 0 failed
+973 assertions, 0 failed
 ```
 
-The full run prints all 972 assertions. Each `...` line above is where the block is cut.
+The full run prints all 973 assertions. Each `...` line above is where the block is cut.
 `python -m ng911check --self-test` exits 0 when every assertion passes and 1 when one fails.
 
 | Host | Python | Assertions |
 |---|---|---|
-| Windows | 3.13.2 | 972 assertions, 0 failed |
-| Windows | 3.12.10 | 972 assertions, 0 failed |
-| Windows | 3.11.15 | 972 assertions, 0 failed |
-| Windows | 3.10.20 | 972 assertions, 0 failed |
-| Windows | 3.9.25 | 972 assertions, 0 failed |
-| Ubuntu | 3.12.3 | 972 assertions, 0 failed |
+| Windows | 3.13.2 | 973 assertions, 0 failed |
+| Windows | 3.12.10 | 973 assertions, 0 failed |
+| Windows | 3.11.15 | 973 assertions, 0 failed |
+| Windows | 3.10.20 | 973 assertions, 0 failed |
+| Windows | 3.9.25 | 973 assertions, 0 failed |
+| Ubuntu | 3.12.3 | 973 assertions, 0 failed |
 
 The Windows 3.9, 3.10 and 3.11 rows run on uv-managed builds of CPython. The self-test also parses
 every source file with `feature_version=(3, 9)`. A separate assertion walks the syntax tree and
@@ -182,13 +182,13 @@ fails on an f-string, because the parse alone accepts one. The Ubuntu row is 3.1
 The counts are equal on every host because the self-test never branches on the platform. It writes
 its files to a temporary folder and removes the folder at the end.
 
-`coverage run --branch -m ng911check --self-test` (coverage 7.16.1) reports 100 percent of 5133
-statements and 1496 branches for the whole package, the test modules included. One line carries a
+`coverage run --branch -m ng911check --self-test` (coverage 7.16.1) reports 100 percent of 5135
+statements and 1494 branches for the whole package, the test modules included. One line carries a
 `pragma: no branch`. It is the loop in `Polyline.midpoint` in `geometry.py`. That loop never ends
 normally, because its last segment always returns. Branch coverage cannot see that. The reader
 refuses a line part with fewer than two positions, so a `Polyline` built in code with a one-vertex
 part is the only way to make `midpoint` return `None`. The production modules alone, without the
-`st_*.py` test modules and `selftest.py`, also reach 100 percent of 3072 statements and 1438
+`st_*.py` test modules and `selftest.py`, also reach 100 percent of 3072 statements and 1436
 branches.
 
 ## What already exists
@@ -674,7 +674,7 @@ This package relies on no Esri, SQL Server, PROJ, FEMA or Census behaviour. It n
   [Appendix C1](https://pe.usps.com/text/pub28/28apc_002.htm) lists the street suffix abbreviations.
   I confirmed on 2026-10-30 that both pages exist with those titles. I did not compare the tables line
   by line. The built-in tables come from those two. No vendor or agency domain file ships.
-  The self-test fails when the package folder holds any file that is not Python.
+  The self-test fails when the package folder holds any file that is not Python. The `__pycache__` folder that Python makes is not inspected.
 - RFC 7946 section 3.1.1, quoted above, for the coordinate order. Section 3.1.4 says a `LineString` is
   "an array of two or more positions". The RFC attaches no meaning to the direction of a line, so
   "first vertex" in STREET-14 means the first position in the array, which is the order of drawing.
@@ -746,7 +746,7 @@ ESN rule in ADDR-05, one to five digits and not zero, is also a local choice.
 - A CSV that is not UTF-8, for example Windows-1252 or the UTF-16 "Unicode text" format of Excel, is refused with exit 2. The message does not name the file or say to save it as UTF-8.
 - The `--out` CSV guard follows the OWASP advice (see "What was verified against documentation"). I did not open a findings file in Excel, LibreOffice or Google Sheets, so I did not observe how each one shows the leading apostrophe. Excel may show it as part of the text. A cell that already starts with an apostrophe is left as it is. A formula character in the middle of the text is not changed, because a spreadsheet does not run it.
 - The zero-hit refusal tests only whether any point lands in the layer. A layer that covers only part of the county passes when one address falls inside it. A point outside every polygon of such a layer still counts as `not inside any`, so use a polygon layer that covers the whole address file.
-- A point inside a null-keyed polygon and a keyed polygon at once takes the first polygon in the file. If the null-keyed polygon comes first, the point is reported as a null key. If it comes second, the point is compared with the keyed polygon and the null key is not reported.
+- A point inside a null-keyed polygon and a keyed polygon at once is reported as a null key, whichever polygon comes first in the file. A point inside two keyed polygons takes the first one in the file.
 - A polygon feature that lacks the key property, rather than holding null, refuses the whole run with exit 2 and is not reported as a null-key finding.
 - A polygon key written as the text `NULL`, `<Null>`, `None` or `nan` counts as a real key. A point inside it gets the ordinary `ESN is blank but point is inside ESN area` finding, not the null-key finding.
 - A layer named in `[areas]` is checked for hits even when its check is off in `[checks]`, so remove the `[areas]` line as well.

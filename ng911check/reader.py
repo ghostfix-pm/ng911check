@@ -307,17 +307,19 @@ def annotate_areas(addresses, areas, key, frame):
     """Set row[key] to the key of the first area that contains the address, else None.
 
     A polygon whose key is null or blank sets "" (inside, key unknown), never None, so a
-    point inside it is not mistaken for a point outside every polygon.
+    point inside it is not mistaken for a point outside every polygon. A point that lies in
+    a null-keyed polygon and a keyed one at once also gets "", whatever the file order, so
+    the null key is never hidden behind an agreeing neighbour.
 
-    A point on a polygon edge is not defined, and a point in two overlapping polygons takes
-    the first in file order. Both are topology defects this package does not judge."""
+    A point on a polygon edge is not defined, and a point in two keyed overlapping polygons
+    takes the first in file order. Both are topology defects this package does not judge."""
     planar = [(k, [[frame.forward(x, y) for x, y in ring] for ring in rings])
               for k, rings in areas]
     for row in addresses:
         row[key] = None
         if row["_XY"] is None:
             continue
-        for k, rings in planar:
-            if point_in_polygon(row["_XY"][0], row["_XY"][1], rings):
-                row[key] = k if k is not None and str(k).strip() else ""
-                break
+        hits = [k for k, rings in planar if point_in_polygon(row["_XY"][0], row["_XY"][1], rings)]
+        if hits:
+            blank = any(k is None or not str(k).strip() for k in hits)
+            row[key] = "" if blank else hits[0]

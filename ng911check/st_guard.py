@@ -78,7 +78,9 @@ def _null_key(c):
     reader.annotate_areas(rows, [("", [SQUARE]), ("B", [SQUARE])], "_k", frame)
     first = rows[0]["_k"]
     reader.annotate_areas(rows, [("B", [SQUARE]), ("", [SQUARE])], "_k", frame)
-    c(first == "" and rows[0]["_k"] == "B", "a point inside a null-keyed and a keyed polygon takes whichever comes first in the file")
+    c(first == "" and rows[0]["_k"] == "", "a point inside a null-keyed and a keyed polygon is a null key whichever comes first in the file  <-- pinned defect")
+    reader.annotate_areas(rows, [("B", [SQUARE]), ("C", [SQUARE])], "_k", frame)
+    c(rows[0]["_k"] == "B", "a point inside two keyed polygons takes the first in the file")
 
 
 def _zero_hits(h):
