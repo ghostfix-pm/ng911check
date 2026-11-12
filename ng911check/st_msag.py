@@ -160,7 +160,15 @@ def section(h):
     c(len(res["attr_mismatch"]) == 1 and res["attr_mismatch"][0]["gis_esns"] == ["100"] and "ESN mismatch: MSAG 200 vs GIS 100" in res["attr_mismatch"][0]["reason"] and res["counts"]["matched"] == 1,
       "reconcile matches the range and reports the ESN difference")
     res = msag.reconcile([g(100, 198, "E", esn="")], [g(100, 198, "E", esn="100")])
-    c(res["attr_mismatch"] == [], "reconcile does not report an ESN difference when the MSAG ESN is blank")
+    c(len(res["attr_mismatch"]) == 1 and "MSAG ESN blank, GIS 100" in res["attr_mismatch"][0]["reason"]
+      and res["counts"]["matched"] == 1,
+      "reconcile reports a BLANK MSAG ESN as loudly as a wrong one  <-- pinned defect")
+    res = msag.reconcile([g(100, 198, "E", esn="")], [g(100, 198, "E", esn="")])
+    c(res["attr_mismatch"] == [], "reconcile stays quiet when neither side holds an ESN at all")
+    res = msag.reconcile([g(100, 198, "E", esn="00999"), g(101, 199, "O", esn="100")],
+                         [g(100, 198, "E", esn="100"), g(101, 199, "O", esn="100")])
+    c(res["counts"]["excepted"] == 1 and res["match_rate"] == 1.0 and res["counts"]["eligible"] == 1,
+      "an ESN-999 record padded to width 5 is still excepted, so it cannot deflate both rates  <-- pinned defect")
     res = msag.reconcile([g(100, 200, "E")], [g(100, 150, "E")])
     c(len(res["range_mismatch"]) == 1 and len(res["gis_not_msag"]) == 0 and res["counts"]["unaccounted"] == 0,
       "reconcile reports an endpoint that moved once, from the MSAG side only")

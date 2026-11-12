@@ -407,7 +407,13 @@ def is_excepted(rec, exceptions, convention_only=False):
     # 6+ digit pseudo-ESN) do NOT depend on a loaded exceptions file,
     # which is Optional; fall back to the standard 3-digit pad when it is absent.
     pad = exceptions.esn_pad_width if exceptions is not None else 3
-    if rec.get("esn") == pad_esn(ESN_999, pad):
+    # Compare the ESN's VALUE, not its padded spelling. load_msag_csv already padded every
+    # MSAG record to config.esn_pad_width, so a fixed pad_esn(ESN_999, 3) never matches
+    # '00999' under esn_pad_width=5: the convention says the placeholder is left out of both
+    # rates "with or without an exceptions file", and instead it stayed in the denominator,
+    # deflated the coverage and exact-tuple rates and was reported as a missing-GIS defect.
+    esn_value = pad_esn(rec.get("esn"), 1)
+    if esn_value.isdigit() and int(esn_value) == int(ESN_999):
         return True
     # Sentinel placeholder rows carry a structurally non-coverable 0-0 range (some MSAGs use
     # LOW=0 HIGH=0 for a routing placeholder). build_gis_msag can never emit such a range, so
@@ -734,7 +740,17 @@ def reconcile(msag_records, gis_records, exceptions=None, addr_index=None):
             overlap_esns = {g["esn"] for g in gis_in_group
                             if _overlaps(rec, g) and g["esn"]}
             mismatched = {e for e in overlap_esns if e != rec.get("esn")}
-            if rec.get("esn") and mismatched:
+            if overlap_esns and not rec.get("esn"):
+                # A blank MSAG ESN cannot route either, so it must be at least as loud as a
+                # wrong one. Skipping it (the old `if rec.get("esn") and ...` guard) left the
+                # record counted as matched, the coverage rate reading 100 percent and OK,
+                # and only the exact-tuple rate moving - with nothing naming the empty value.
+                attr_mismatch.append({
+                    "msag": rec,
+                    "gis_esns": sorted(overlap_esns),
+                    "reason": "MSAG ESN blank, GIS %s" % ",".join(sorted(overlap_esns)),
+                })
+            elif rec.get("esn") and mismatched:
                 attr_mismatch.append({
                     "msag": rec,
                     "gis_esns": sorted(mismatched),
