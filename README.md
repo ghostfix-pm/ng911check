@@ -160,20 +160,20 @@ PASS  ADDR-05 declares exactly the columns it reads
 PASS  the package folder holds Python files only, so no vendor domain file ships  <-- pinned defect
 ...
 --------------------------------------------------------------------
-988 assertions, 0 failed
+989 assertions, 0 failed
 ```
 
-The full run prints all 988 assertions. Each `...` line above is where the block is cut.
+The full run prints all 989 assertions. Each `...` line above is where the block is cut.
 `python -m ng911check --self-test` exits 0 when every assertion passes and 1 when one fails.
 
 | Host | Python | Assertions |
 |---|---|---|
-| Windows | 3.13.2 | 988 assertions, 0 failed |
-| Windows | 3.12.10 | 988 assertions, 0 failed |
-| Windows | 3.11.15 | 988 assertions, 0 failed |
-| Windows | 3.10.20 | 988 assertions, 0 failed |
-| Windows | 3.9.25 | 988 assertions, 0 failed |
-| Ubuntu | 3.12.3 | 988 assertions, 0 failed |
+| Windows | 3.13.2 | 989 assertions, 0 failed |
+| Windows | 3.12.10 | 989 assertions, 0 failed |
+| Windows | 3.11.15 | 989 assertions, 0 failed |
+| Windows | 3.10.20 | 989 assertions, 0 failed |
+| Windows | 3.9.25 | 989 assertions, 0 failed |
+| Ubuntu | 3.12.3 | 989 assertions, 0 failed |
 
 The Windows 3.9, 3.10 and 3.11 rows run on uv-managed builds of CPython. The self-test also parses
 every source file with `feature_version=(3, 9)`. A separate assertion walks the syntax tree and
@@ -182,7 +182,7 @@ fails on an f-string, because the parse alone accepts one. The Ubuntu row is 3.1
 The counts are equal on every host because the self-test never branches on the platform. It writes
 its files to a temporary folder and removes the folder at the end.
 
-`coverage run --branch -m ng911check --self-test` (coverage 7.16.1) reports 100 percent of 5184
+`coverage run --branch -m ng911check --self-test` (coverage 7.16.1) reports 100 percent of 5186
 statements and 1510 branches for the whole package, the test modules included. One line carries a
 `pragma: no branch`. It is the loop in `Polyline.midpoint` in `geometry.py`. That loop never ends
 normally, because its last segment always returns. Branch coverage cannot see that. The reader
@@ -280,7 +280,7 @@ python -m ng911check --catalog-check README.md
 | `--x-field`, `--y-field` | `X`, `Y` | The coordinate columns of a CSV layer. |
 | `--rename LAYER:ACTUAL=CANONICAL` | none | Read column ACTUAL of the layer as CANONICAL. Repeat the flag as needed. |
 | `--domains CSV` | none | More street types, directions and modifier values: `domain,full,abbrev`. |
-| `--msag CSV` | none | The MSAG as a CSV. It turns on XLAYER-16. |
+| `--msag CSV` | none | The MSAG as a CSV. It turns on XLAYER-16, which also needs `--streets`: without a street file it is skipped with a notice. |
 | `--msag-config JSON` | none | The MSAG column map, header row, floors and a pinned SHA-256. |
 | `--msag-exceptions CSV` | none | MSAG records to leave out of the match rate. See The MSAG numbers. |
 | `--street-names CSV` | none | An authoritative street-name list for STREET-11. It needs `--msag` or `--msag-config`; alone it is refused with exit 2. |
@@ -342,7 +342,7 @@ quoted. The `csv` module of Python 3.9 and 3.10 leaves a bare carriage return un
 line end is LF, and that would split the row in two. The `--format json` file is not guarded, because
 a spreadsheet does not open JSON. This package never reads its own findings file back, so it has
 no code that strips the apostrophe. The self-test fails if `reader.py`, `msag.py`, `crosswalks.py` or `settings.py` imports the
-report module, in any import form.
+report module with an `import` or `from ... import` statement. A call to `importlib.import_module` or `__import__` is not checked.
 
 ## Inputs
 
@@ -490,8 +490,8 @@ MSAG roll-up by street (top 2 of 2):
 ...
 ```
 
-The floor of 98 percent is the default `min_match_rate`. Secondary sources, a Montana NG9-1-1
-assessment and a GeoComm case study, attribute a 98 percent synchronisation rate to NENA 71-501,
+The floor of 98 percent is the default `min_match_rate`. Secondary sources, including a Montana
+NG9-1-1 assessment, attribute a 98 percent synchronisation rate to NENA 71-501,
 *Synchronizing GIS databases with MSAG and ALI*. I did not read the NENA text. The floor is a
 setting you can change.
 
@@ -663,7 +663,7 @@ what a check needs from the run. A check that does not get it is skipped, and th
 | XLAYER-13 | address | WARNING | yes | geometry | Flag an address on the opposite side of the centerline from the side its number implies. |
 | XLAYER-14 | street | INFO | yes | addresses | Report a street segment that has an address range but no address point inside it. |
 | XLAYER-15 | both | WARNING | yes | modifier domains | Flag a modifier or separator value that is not in the supplied domain. |
-| XLAYER-16 | both | WARNING, ERROR, INFO | no | msag | Compare the MSAG with the GIS ranges and report coverage, exact-tuple rate, differences and file age. |
+| XLAYER-16 | both | WARNING, ERROR, INFO | no | msag, streets | Compare the MSAG with the GIS ranges and report coverage, exact-tuple rate, differences and file age. |
 | XLAYER-17 | address | WARNING | yes | addresses, geometry | Flag an address whose house number is out of order with its neighbours along its street. |
 | XLAYER-18 | address | WARNING | yes | addresses, geometry | Flag an address that sits clearly nearer a block of its street whose range excludes its number. |
 | XLAYER-19 | address | WARNING | yes | addresses, geometry | Flag an address that sits clearly nearer a ranged street of another name than its own street. |
@@ -790,6 +790,13 @@ ESN rule in ADDR-05, one to five digits and not zero, is also a local choice.
 - An unexpected crash (exit 70) prints a Python traceback to stderr. The traceback can quote a value from an input row.
 - The synthetic demo files use the state code `FL`. That is a state abbreviation, not a county identifier.
 - A path in a settings `[areas]` line or in the MSAG config is opened as written, so a UNC path makes Windows contact that host. Use settings and config files you wrote yourself.
+- An `--msag` run with no `--streets` file skips XLAYER-16 with a notice and still exits 0, because there is no GIS side to compare. The XLAYER-04 skip behaves the same way.
+- The MSAG source age in the quoted run reads `0 day(s) old` on a fresh checkout. The tool measures the file modification time, so the same demo file reads a larger number once it is days old.
+- The XLAYER-07 finding for a repeated NGUID compares values with leading and trailing whitespace stripped. Its `nguid` column can show `x` when the stored text is a tab or a carriage return before `x`.
+- A CSV address row with a blank `Add_Number` is not judged by ADDR-01. Only ADDR-08 reports it, at WARNING, so a run with no other ERROR exits 0.
+- A CSV row with `X` blank and `Y` present refuses the whole file with exit 2. A row with both `X` and `Y` blank is kept, and it gives no finding and no notice unless a check that needs a position runs.
+- A response-area layer with exactly one address inside it passes the zero-hit refusal, so blank stored values on the other addresses stay silent and no coverage notice is printed.
+- The Windows points in the `--out` guard sentence (file identity, 8.3 short names, the long-path prefix) and the UNC sentence are observed behaviour. I did not cite Microsoft documentation for them.
 - A few one-operator changes to the range fit code cannot be pinned because they change no verdict: the early skip in XLAYER-19, the initial value of the rank list, `<` against `<=` between numbers that all differ, and the sign constants.
 
 ## Related

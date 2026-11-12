@@ -899,7 +899,7 @@ def _msag_rec_label(rec):
 @registry.check(id="XLAYER-16", family=FAMILY.CROSS, severity=SEVERITY.WARNING,
                 priority="v2", target="both", default_on=False,
                 emits=(SEVERITY.WARNING, SEVERITY.ERROR, SEVERITY.INFO,), summary="Compare the MSAG with the GIS ranges and report coverage, exact-tuple rate, differences and file age.",
-                fields=(), requires=("msag",))
+                fields=(), requires=("msag", "streets"))
 def check_xlayer_16(addresses, streets, ctx):
     """MSAG <-> GIS reconciliation (NENA 71-501, opt-in).
 

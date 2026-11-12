@@ -242,6 +242,9 @@ def _geojson(h, tmp, ini):
     code, out, err = call(["--addresses", addr, "--streets", strt, "--settings", ini2, "--msag", msag_ok])
     c("MSAG match rate 100.00%" in out and "MSAG exact-tuple rate 100.00%" in out and "MSAG roll-up" not in out,
       "a run whose MSAG agrees with the GIS prints the rates and no roll-up")
+    code, out, err = call(["--addresses", addr, "--settings", ini2, "--msag", msag_ok])
+    c("XLAYER-16 was skipped: it needs a street file (--streets)" in out and "not in GIS" not in out and "BELOW FLOOR" not in out,
+      "--msag without --streets skips XLAYER-16 with a notice instead of calling every MSAG record missing from an empty GIS  <-- pinned defect")
     code, out, err = call(["--addresses", addr, "--streets", strt, "--settings", ini2, "--msag-config", cfg])
     c(code == 1 and "MSAG match rate" in out, "--msag-config alone names the MSAG file and the floor")
     code, out, err = call(["--addresses", addr, "--streets", strt, "--settings", ini2, "--msag-config", cfg, "--msag", msag_csv])
