@@ -160,20 +160,20 @@ PASS  ADDR-05 declares exactly the columns it reads
 PASS  the package folder holds Python files only, so no vendor domain file ships  <-- pinned defect
 ...
 --------------------------------------------------------------------
-989 assertions, 0 failed
+1015 assertions, 0 failed
 ```
 
-The full run prints all 989 assertions. Each `...` line above is where the block is cut.
+The full run prints all 1015 assertions. Each `...` line above is where the block is cut.
 `python -m ng911check --self-test` exits 0 when every assertion passes and 1 when one fails.
 
 | Host | Python | Assertions |
 |---|---|---|
-| Windows | 3.13.2 | 989 assertions, 0 failed |
-| Windows | 3.12.10 | 989 assertions, 0 failed |
-| Windows | 3.11.15 | 989 assertions, 0 failed |
-| Windows | 3.10.20 | 989 assertions, 0 failed |
-| Windows | 3.9.25 | 989 assertions, 0 failed |
-| Ubuntu | 3.12.3 | 989 assertions, 0 failed |
+| Windows | 3.13.2 | 1015 assertions, 0 failed |
+| Windows | 3.12.10 | 1015 assertions, 0 failed |
+| Windows | 3.11.15 | 1015 assertions, 0 failed |
+| Windows | 3.10.20 | 1015 assertions, 0 failed |
+| Windows | 3.9.25 | 1015 assertions, 0 failed |
+| Ubuntu | 3.12.3 | 1015 assertions, 0 failed |
 
 The Windows 3.9, 3.10 and 3.11 rows run on uv-managed builds of CPython. The self-test also parses
 every source file with `feature_version=(3, 9)`. A separate assertion walks the syntax tree and
@@ -182,13 +182,13 @@ fails on an f-string, because the parse alone accepts one. The Ubuntu row is 3.1
 The counts are equal on every host because the self-test never branches on the platform. It writes
 its files to a temporary folder and removes the folder at the end.
 
-`coverage run --branch -m ng911check --self-test` (coverage 7.16.1) reports 100 percent of 5186
-statements and 1510 branches for the whole package, the test modules included. One line carries a
+`coverage run --branch -m ng911check --self-test` (coverage 7.16.1) reports 100 percent of 5298
+statements and 1550 branches for the whole package, the test modules included. One line carries a
 `pragma: no branch`. It is the loop in `Polyline.midpoint` in `geometry.py`. That loop never ends
 normally, because its last segment always returns. Branch coverage cannot see that. The reader
 refuses a line part with fewer than two positions, so only a `Polyline` built in code with a part of fewer than two vertices
 can make `midpoint` return `None`. The production modules alone, without the
-`st_*.py` test modules and `selftest.py`, also reach 100 percent of 3088 statements and 1444
+`st_*.py` test modules and `selftest.py`, also reach 100 percent of 3121 statements and 1484
 branches.
 
 ## What already exists
@@ -253,6 +253,12 @@ python -m ng911check --addresses demo/addresses.csv --streets demo/streets.csv -
 
 The `demo` folder holds the synthetic files that every quoted run in this file uses.
 
+It also installs as a package, and it still pulls nothing in: `pip install .` (or `pipx install .`)
+puts a `ng911check` command on the path that runs the same command line as `python -m ng911check`,
+with the same exit codes. `pyproject.toml` needs setuptools 77 or newer. The self-test runs from
+the installed package too, so `ng911check --self-test` is a check of the wheel and not only of the
+checkout.
+
 The agency is required. Put `expected_agid = your.agency.domain` under `[agency]` in the settings
 file, or pass `--agency`. The tool refuses to run without it, because a default agency would make
 every other agency's NGUIDs fail.
@@ -289,6 +295,7 @@ python -m ng911check --catalog-check README.md
 | `--format` | `csv` | Format of the `--out` file: `csv` or `json`. |
 | `--out FILE` | none | Where to write every finding. Nothing is written without `--apply`. |
 | `--apply` | off | Write the `--out` file. It needs `--out`. |
+| `--fail-on LEVEL` | `error` | Which finding makes the run exit 1: `error`, `warning` or `any`. It can only widen what fails; no value idles a finding or lowers a severity. A non-default value is printed in the report. |
 | `--catalog` | off | Print the check catalog and exit. |
 | `--catalog-check FILE` | none | Exit 1 when the catalog block in FILE differs from the code. |
 | `--self-test` | off | Run the offline assertions and exit. |
@@ -302,9 +309,15 @@ file named in the MSAG config. It is also refused when `OUT.tmp`, the file `--ap
 one of those files. The guard compares file identity, so a hard link to an input is caught. The refused
 run leaves that file as it was.
 
-Exit codes: 0 no ERROR finding, 1 at least one ERROR after the overrides, 2 an input or settings
-file was refused or could not be read, or a polygon layer holds no address point, 64 usage error, 70 an unexpected crash. A crash never
-reads as a finding.
+Exit codes: 0 no ERROR finding, 1 at least one ERROR after the overrides (or a finding at the level
+`--fail-on` names), 2 an input or settings file was refused or could not be read, or a polygon layer
+holds no address point, 64 usage error, 70 an unexpected crash. A crash never reads as a finding.
+
+`--fail-on error` is the default and is the rule above. `--fail-on warning` and `--fail-on any` make
+the run exit 1 on a WARNING, or on any finding at all, for a batch job that should stop before a
+warning becomes a defect. A policy can only widen what exits 1: no value idles a finding or lowers a
+severity, so nothing here can turn an ERROR into exit 0. A non-default policy is printed in the
+report, under the inputs, as `Exit policy: exit 1 on any WARNING or ERROR (--fail-on warning).`
 
 In the runs below, `ARGS` stands for `--addresses demo/addresses.csv --streets demo/streets.csv --settings demo/agency.ini --units feet`.
 A line that holds only `...` is where this file cuts the report.
@@ -357,13 +370,24 @@ latitude. RFC 7946 section 3.1.1 says: "The first two elements are longitude and
 easting and northing, precisely in that order". Streets with geometry turn on XLAYER-13, XLAYER-17, XLAYER-18, XLAYER-19 and STREET-14.
 XLAYER-05 also needs `--optional` or `[checks] XLAYER-05 = on`.
 
+A GeoJSON geometry must carry a string `type`. RFC 7946 makes it a required member, and an object
+that held `coordinates` but no `type` used to read as "no geometry": a whole centerline disappeared,
+and XLAYER-13/17/18/19 and STREET-14 then said the segment "has no line" while the file carried one.
+A `MultiPolygon` must be a list of polygons, each a list of rings, and in a degrees run a polygon
+vertex at 0, 0 is refused, as a street vertex is. `frame.forward` would place that vertex millions of
+feet from the data, so one null-island vertex stretched the polygon into a wedge and every address in
+the wedge counted as inside the area.
+
 A GeoJSON property may be a string, a number or null. A number in a text column is read as the
-text a CSV would hold, so `"COUNTY": 99999` reads as `99999`. A list, an object or `true` or `false`
-refuses the file with exit 2. A header-only CSV, or a `FeatureCollection` with no features, also
+text a CSV would hold, so `"COUNTY": 99999` reads as `99999`. A number too large for a float, such
+as a 400-digit integer, is read as its digits instead of crashing the run. A list, an object or
+`true` or `false` refuses the file with exit 2. A header-only CSV, or a `FeatureCollection` with no features, also
 refuses the file with exit 2. An empty export would otherwise pass as clean.
 
 Values are not stripped, because ADDR-07 exists to find leading and trailing spaces. A street range
-that is not a whole number refuses the file. Reading it as blank would make a broken range look
+that is not a whole number refuses the file. A house number must be a whole number: a JSON
+`"Add_Number": 5.5` is not usable, so ADDR-08 reports it exactly as it reports the CSV text `5.5`,
+and no check validates it as house number 5. Reading it as blank would make a broken range look
 unused. A row is numbered by its position in the file, and findings quote that row number.
 
 Degrees are converted to planar feet around the centre of the data. Over the few miles a county
@@ -397,12 +421,21 @@ weaken a run. A key you leave out takes its built-in default.
 | `[areas]` | `RA-xx = file.geojson|key_property[|fields[|sentinel]]` |
 
 A `[checks]` line with `off` removes every finding of that check. The report prints the line, and for
-a check that can emit an ERROR it adds `(can emit ERROR: its findings are NOT in this report)`.
+a check that can emit an ERROR it adds `(can emit ERROR: its findings are NOT in this report)`. A line
+that provably changes nothing - `on` for a check that is on by default, `off` for one that is off -
+is printed with `(no effect: already on by default)`, so the dead lines of a tuned file are as
+visible as the no-op `[severity]` ones.
 
 The severity rule has three parts. An override may raise a WARNING to ERROR. An override never
 lowers an ERROR record. An INFO metric line is left alone. The report prints, before the run, what
 each line can do, and after the run, what each line did. The self-test pins this with the line
 `ADDR-05 = INFO` over a file that holds an invalid ESN.
+
+An `[areas]` line can also replace the address column that is compared and the sentinel value, and
+both change every verdict. The report therefore prints the RESOLVED rule, not the line as written:
+`RA-08        esn.geojson key=ESN fields=ZIP_CODE sentinel=0`. A field named twice in one line
+(`RA-08 = esn.geojson|ESN|ESN,ESN`) is refused with exit 2, because the check emits one finding per
+field occurrence and every finding, roll-up count and `--out` row would be doubled.
 
 `RA-09` has a second class, a blank CITY inside a postal-city polygon. That class is a data-entry
 backlog and not a misroute, so it is reported at INFO and answers to its own line, `RA-09-BLANK`.
@@ -449,12 +482,17 @@ reports three numbers together:
 
 Three kinds of MSAG record are left out of both rates and out of the findings, with or without an
 exceptions file: a record on ESN 999, a record whose range is an explicit 0-0, and a record whose
-ESN is all digits and longer than five digits. The report prints `N of M records excepted`. A four
+ESN is all digits and longer than five digits. The ESN-999 test compares the VALUE, so the sentinel
+is still excepted when `esn_pad_width` pads it to `00999`. The report prints `N of M records excepted`. A four
 or five digit ESN is compared, because ADDR-05 accepts one to five digits. The exceptions file
 adds more records, through `--msag-exceptions`. Its header is
 `kind,community,prefix,street,type,suffix,esn`. A `name` row leaves a street out on one ESN, or on
 every ESN when `esn` is blank. A `permanent` row leaves one community, street and ESN out. The
 street-name list of `--street-names` has the header `community,street_name`.
+
+A record whose range a GIS side covers but whose ESN is blank is reported like a wrong ESN
+(`MSAG ESN blank, GIS 100`), at WARNING. A blank ESN cannot route either, and leaving it quiet kept
+the coverage rate at 100 percent while only the exact-tuple rate moved.
 
 The `--msag-config` file is JSON. A key you leave out takes its default. An unknown key refuses the
 file. So does a value of the wrong type, a `min_match_rate` outside 0 to 1, and a file that is not a
@@ -769,7 +807,7 @@ ESN rule in ADDR-05, one to five digits and not zero, is also a local choice.
 - An address far from its street is reported at INFO by XLAYER-05 when its number falls inside a range of a same-name segment. INFO never changes the exit code, even with `--optional`.
 - The degraded STREET-11 notice also prints when no street file is given.
 - The response-area roll-up still prints when the area check is switched off with `[checks]`. A finding names a column the file lacks as `'None'`, for example `ONEWAY 'None' not a recognized value`.
-- ADDR-08 says `missing house number` for an alphanumeric number such as `12A`. The number is present but not numeric.
+- ADDR-08 says `missing house number` for an alphanumeric number such as `12A`, and for a fractional one such as `5.5`. The value is present but not a usable number, and the message does not say which of the two it is.
 - With `--apply` the tool writes `OUT.tmp` first and then renames it onto `OUT`. An input file named `OUT.tmp` is refused. Any other file under that name is overwritten without warning. A failed rename, for example `--out` naming a folder, leaves `OUT.tmp` behind.
 - The `--out` guard compares file identity for names that exist and resolved paths for a name that does not exist yet. A hard link, a symbolic link and a different case on Windows are caught. An 8.3 short name and a long-path prefix (the `?` form) are not exercised: the volume I tested on has no short names, and the prefix works on Windows only.
 - The `--out` check compares file identity. A network or copy-on-write file system that reports a different identity for one file would not be caught.
