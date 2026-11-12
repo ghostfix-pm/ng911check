@@ -3,6 +3,7 @@ import csv
 import io
 import json
 import os
+import time
 
 from . import __version__, catalog, cli, reader
 from .selftest import Quiet, Tmp
@@ -297,3 +298,109 @@ def _geojson(h, tmp, ini):
     bad = tmp.write("pin.json", json.dumps({"source_path": "msag.csv", "source_hash": "0" * 64}))
     code, out, err = call(["--addresses", addr, "--settings", ini2, "--msag-config", bad])
     c(code == 2 and "changed: its SHA-256 is" in err, "a pinned MSAG hash that no longer matches exits 2 and names both hashes  <-- pinned defect")
+
+    # ---- a response-area line states the rule it really applied
+    code, out, err = call(["--addresses", addr, "--streets", strt, "--settings", ini2])
+    c("key=ESN fields=ESN sentinel=(default)" in out,
+      "the report prints the resolved response-area rule: the compared field and the sentinel")
+    fld_ini = tmp.write("fld.ini", INI + "[areas]\nRA-08 = esn.geojson|ESN|ZIP_CODE|00000\n")
+    code, out, err = call(["--addresses", addr, "--settings", fld_ini])
+    c("fields=ZIP_CODE sentinel=00000" in out,
+      "a response-area line that replaces the field and the sentinel says so in the audit trail  <-- pinned defect")
+    dup_ini = tmp.write("dup.ini", INI + "[areas]\nRA-08 = esn.geojson|ESN|ESN,ESN\n")
+    code, out, err = call(["--addresses", addr, "--settings", dup_ini])
+    c(code == 2 and "is named more than once" in err and "report every finding twice" in err,
+      "an [areas] field named twice is refused instead of doubling every finding, count and --out row  <-- pinned defect")
+
+    # ---- a [checks] line that changes nothing says so
+    noop_ini = tmp.write("noop.ini", INI + "[checks]\nADDR-01 = on\nXLAYER-05 = off\n")
+    code, out, err = call(["--addresses", addr, "--streets", strt, "--settings", noop_ini])
+    c("(no effect: already on by default)" in out and "(no effect: already off by default)" in out,
+      "[checks] lines that change nothing are annotated like the [severity] no-ops  <-- pinned defect")
+
+    # ---- --fail-on widens what exits 1, and can never narrow it
+    warn_addr = csv_file(tmp, "warn.csv", reader.ADDRESS_COLUMNS + ("X", "Y"),
+                         [dict(A(STATUS="RETIRED"), X=1000.0, Y=1000.0)])
+    warn_strt = csv_file(tmp, "warn_streets.csv", reader.STREET_COLUMNS, [S()])
+    only_warn = ["--addresses", warn_addr, "--streets", warn_strt, "--settings", ini, "--units", "feet"]
+    code, out, err = call(only_warn)
+    c(code == 0 and "Findings: 0 ERROR, 1 WARNING" in out and "Exit policy" not in out,
+      "a run with only a WARNING exits 0 under the documented default and prints no policy line")
+    code, out, err = call(only_warn + ["--fail-on", "warning"])
+    c(code == 1 and "Exit policy: exit 1 on any WARNING or ERROR (--fail-on warning)." in out,
+      "--fail-on warning makes a WARNING exit 1 and states the policy in the report")
+    code, out, err = call(only_warn + ["--fail-on", "any"])
+    c(code == 1 and "(--fail-on any)" in out, "--fail-on any makes any finding exit 1")
+    code, out, err = call(only_warn + ["--fail-on", "error"])
+    c(code == 0 and "Exit policy" not in out, "--fail-on error is the default and prints nothing")
+    hard = ["--addresses", addr, "--streets", strt, "--settings", ini2]
+    code, out, err = call(hard + ["--fail-on", "error"])
+    c(code == 1 and "ERROR" in out, "no --fail-on value can turn an ERROR into exit 0")
+    code, out, err = call(hard + ["--fail-on", "nope"])
+    c(code == 64, "--fail-on takes error, warning or any only")
+
+    # ---- the truncation hint does not ask for work a --apply run already did
+    code, out, err = call(hard + ["--show", "1", "--out", tmp.path("all.csv"), "--apply"])
+    c("Wrote " in out and "Write them all with --out FILE --apply" not in out,
+      "after --apply wrote the findings the report no longer tells the user to write them  <-- pinned defect")
+    code, out, err = call(hard + ["--show", "1", "--out", tmp.path("all2.csv")])
+    c("holds every finding once you add --apply" in out,
+      "without --apply the hint names the file and the flag that is still missing")
+
+    # ---- malformed GeoJSON is refused, never read as "no geometry" and never a crash
+    notype = tmp.write("notype.geojson", json.dumps({"type": "FeatureCollection", "features": [
+        {"type": "Feature", "properties": props(A()), "geometry": {"coordinates": [-30.4995, 29.10015]}}]}))
+    code, out, err = call(["--addresses", notype, "--settings", ini])
+    c(code == 2 and "no string 'type'" in err,
+      "a GeoJSON geometry with no type is refused instead of read as 'no geometry'  <-- pinned defect")
+    flat = tmp.write("flat.geojson", json.dumps({"type": "FeatureCollection", "features": [
+        {"type": "Feature", "properties": {"ESN": 100},
+         "geometry": {"type": "MultiPolygon", "coordinates": box}}]}))
+    flat_ini = tmp.write("flat.ini", INI + "[areas]\nRA-08 = flat.geojson|ESN\n")
+    code, out, err = call(["--addresses", addr, "--settings", flat_ini])
+    c(code == 2 and "list of polygons" in err,
+      "a MultiPolygon whose coordinates are one flat ring exits 2, not 70  <-- pinned defect")
+    scalar = tmp.write("scalar.geojson", json.dumps({"type": "FeatureCollection", "features": [
+        {"type": "Feature", "properties": {"ESN": 100},
+         "geometry": {"type": "MultiPolygon", "coordinates": [1.0, 2.0]}}]}))
+    scalar_ini = tmp.write("scalar.ini", INI + "[areas]\nRA-08 = scalar.geojson|ESN\n")
+    code, out, err = call(["--addresses", addr, "--settings", scalar_ini])
+    c(code == 2 and "list of polygons" in err,
+      "a MultiPolygon whose coordinates are numbers exits 2 instead of crashing")
+    mixed = tmp.write("mixed.geojson", json.dumps({"type": "FeatureCollection", "features": [
+        {"type": "Feature", "properties": {"ESN": 100},
+         "geometry": {"type": "MultiPolygon",
+                      "coordinates": [[[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 0.0]], 7.0]]}}]}))
+    mixed_ini = tmp.write("mixed.ini", INI + "[areas]\nRA-08 = mixed.geojson|ESN\n")
+    code, out, err = call(["--addresses", addr, "--settings", mixed_ini])
+    c(code == 2 and "ring must be a list of positions" in err,
+      "a polygon whose second ring is a number exits 2 instead of crashing")
+    null_isle = tmp.write("nullisle.geojson", json.dumps({"type": "FeatureCollection", "features": [
+        {"type": "Feature", "properties": {"ESN": 100},
+         "geometry": {"type": "Polygon", "coordinates": [box[:4] + [[0.0, 0.0], box[0]]]}}]}))
+    ni_ini = tmp.write("ni.ini", INI + "[areas]\nRA-08 = nullisle.geojson|ESN\n")
+    code, out, err = call(["--addresses", addr, "--settings", ni_ini])
+    c(code == 2 and "vertex at 0, 0" in err and "nullisle.geojson" in err,
+      "a polygon vertex at 0, 0 is refused in a degrees run instead of stretching the area over the county  <-- pinned defect")
+    huge = tmp.write("huge.geojson", collection(feature("Point", [-30.4995, 29.10015], dict(A(), ZIP_CODE=10 ** 400))))
+    code, out, err = call(["--addresses", huge, "--settings", ini])
+    c(code != 70 and "Traceback" not in err and "Findings:" in out,
+      "a 400-digit number in a property is read as text instead of crashing with exit 70  <-- pinned defect")
+
+    # ---- a fractional house number is reported, never truncated into a different number
+    frac = tmp.write("frac.geojson", collection(feature("Point", [-30.4995, 29.10015],
+                                                        dict(A(), Add_Number=5.5, HOUSE_NU="5.5",
+                                                             ADDRESS="5.5 ELM ST"))))
+    code, out, err = call(["--addresses", frac, "--settings", ini])
+    c("ADDR-08" in out and "Add_Number '5'" not in out,
+      "a fractional Add_Number is reported by ADDR-08 and not silently validated as 5  <-- pinned defect")
+
+    # ---- a stale MSAG keeps the age inside the reconciliation block
+    stale = tmp.write("msag_old.csv", HEADER + ",ELM,ST,,100,199,TESTVILLE,B,100\n")
+    old = time.time() - 40 * 86400
+    os.utime(stale, (old, old))
+    age_cfg = tmp.write("msag_age.json", json.dumps({"source_path": "msag_old.csv", "max_source_age_days": 30}))
+    code, out, err = call(["--addresses", addr, "--streets", strt, "--settings", ini2, "--msag-config", age_cfg])
+    block = out.split("MSAG reconciliation:")[-1].split("Findings:")[0]
+    c("MSAG source is 40 day(s) old (limit 30)" in block,
+      "a stale MSAG keeps its age line in the reconciliation block, not only in the finding list  <-- pinned defect")

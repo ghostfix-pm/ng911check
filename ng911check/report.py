@@ -7,6 +7,14 @@ from collections import Counter
 from .model import SEVERITY
 
 _ORDER = {SEVERITY.ERROR: 0, SEVERITY.WARNING: 1, SEVERITY.INFO: 2}
+# --fail-on: which finding makes a run exit 1. The documented default is ERROR; the other two
+# values can only WIDEN the failure set, never narrow it, so no setting can idle a finding.
+FAIL_ON = ("error", "warning", "any")
+FAIL_ON_RANK = {"error": 0, "warning": 1, "any": 2}
+FAIL_ON_ERROR = FAIL_ON[0]
+FAIL_ON_TEXT = {"error": "any ERROR", "warning": "any WARNING or ERROR",
+                "any": "any finding at all"}
+DEFAULT_MORE_HINT = "Write them all with --out FILE --apply."
 CSV_COLUMNS = ("check_id", "check_name", "family", "severity", "layer", "row", "nguid",
                "description", "x", "y")
 # Numbers stay numbers: the x of a western longitude starts with "-" and must read as a number,
@@ -43,9 +51,15 @@ def by_check(records):
                   key=lambda t: (_ORDER[t[1]], t[0]))
 
 
-def exit_status(records):
-    """1 when any finding is an ERROR after the overrides, else 0."""
-    return 1 if any(r.severity == SEVERITY.ERROR for r in records) else 0
+def exit_status(records, fail_on=FAIL_ON_ERROR):
+    """The exit code for a set of findings under an exit policy.
+
+    `fail_on` can only make the run STRICTER than the documented default (ERROR -> 1): it
+    never idles a finding and never changes a severity, it only widens what counts as a
+    failure. There is no value that turns an ERROR into exit 0.
+    """
+    worst = FAIL_ON_RANK.get(fail_on, FAIL_ON_RANK[FAIL_ON_ERROR])
+    return 1 if any(_ORDER[r.severity] <= worst for r in records) else 0
 
 
 def _xy(record, frame):
@@ -87,10 +101,20 @@ def to_json(rows, notices, summary):
                       indent=2, sort_keys=True)
 
 
-def format_text(records, notices, settings_lines, tally_lines, input_lines, rollups, show):
-    """The console report. `rollups` is a list of (title, [line, ...]) sections."""
+def format_text(records, notices, settings_lines, tally_lines, input_lines, rollups, show,
+                more_hint=DEFAULT_MORE_HINT, policy_line=None):
+    """The console report. `rollups` is a list of (title, [line, ...]) sections.
+
+    `more_hint` is the sentence after a truncated finding list: the default tells the reader how
+    to write the rest, and a run that already wrote them passes the plain count instead (the
+    report used to instruct the user to --out --apply immediately above "Wrote <file>.").
+    `policy_line` states a non-default exit policy, so the run's exit rule is auditable; it is
+    None for the documented default, which keeps the default report byte-identical.
+    """
     out = ["ng911check report", "-" * 68]
     out.extend(input_lines)
+    if policy_line:
+        out.append(policy_line)
     out.append("")
     out.extend(settings_lines)
     if tally_lines:
@@ -122,5 +146,5 @@ def format_text(records, notices, settings_lines, tally_lines, input_lines, roll
                                                        r.source_oid, r.description))
         rest = len(records) - len(shown)
         if rest > 0:
-            out.append("  ... %d more. Write them all with --out FILE --apply." % rest)
+            out.append("  ... %d more.%s" % (rest, " " + more_hint if more_hint else ""))
     return "\n".join(out)

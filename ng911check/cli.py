@@ -18,7 +18,11 @@ from .crosswalks import load_crosswalks, load_domain_csv
 from .geometry import UNITS, Frame, fits_degrees, require_street_overlap
 
 EXIT_OK, EXIT_ERRORS, EXIT_INPUT, EXIT_USAGE, EXIT_CRASH = 0, 1, 2, 64, 70
-KPI_NAMES = ("MSAG match-rate KPI", "MSAG exact-tuple KPI", "MSAG source age")
+# XLAYER-16 names the age line "MSAG source age" until the file is over the limit, when it
+# renames it "MSAG source older than the limit". Selecting by that prefix keeps the age in the
+# reconciliation block in exactly the case the age exists for.
+KPI_NAMES = ("MSAG match-rate KPI", "MSAG exact-tuple KPI")
+AGE_NAME_PREFIX = "MSAG source "
 ROLLUP_ROWS = 10
 
 
@@ -90,6 +94,10 @@ def build_parser():
     ap.add_argument("--out", metavar="FILE", help="write every finding here, with --apply")
     ap.add_argument("--apply", action="store_true",
                     help="write the --out file. Without it nothing is written.")
+    ap.add_argument("--fail-on", dest="fail_on", choices=report.FAIL_ON,
+                    default=report.FAIL_ON_ERROR,
+                    help="which finding makes the run exit 1 (default error). warning or any "
+                         "only makes the run stricter; nothing can turn an ERROR into exit 0.")
     ap.add_argument("--catalog", action="store_true", help="print the check catalog and exit")
     ap.add_argument("--catalog-check", dest="catalog_check", metavar="FILE",
                     help="exit 1 if the catalog block in FILE is out of date")
@@ -153,7 +161,25 @@ def _load_settings(args):
 
 def _kpi_lines(records):
     return ["  " + r.description for r in records
-            if r.check_id == "XLAYER-16" and r.check_name in KPI_NAMES]
+            if r.check_id == "XLAYER-16"
+            and (r.check_name in KPI_NAMES or r.check_name.startswith(AGE_NAME_PREFIX))]
+
+
+def _more_hint(args):
+    """The sentence after a truncated finding list, which must not ask for work already done."""
+    if args.out and args.apply:
+        return ""    # the "Wrote <file>." line follows the list
+    if args.out:
+        return "--out %s holds every finding once you add --apply." % args.out
+    return report.DEFAULT_MORE_HINT
+
+
+def _policy_line(args):
+    """State a non-default exit policy. The default is documented, so it prints nothing."""
+    if args.fail_on == report.FAIL_ON_ERROR:
+        return None
+    return ("Exit policy: exit 1 on %s (--fail-on %s). The default is exit 1 on any ERROR."
+            % (report.FAIL_ON_TEXT[args.fail_on], args.fail_on))
 
 
 def _rollup_sections(ctx, records):
@@ -245,7 +271,7 @@ def run(args):
             raise ValueError("%s compares %s but the addresses file has no such column; "
                              "set the fields in the [areas] line or use --rename"
                              % (cid, ", ".join(absent)))
-        reader.annotate_areas(addresses, areas[cid], ra.annotation_key(cid), frame)
+        reader.annotate_areas(addresses, areas[cid], ra.annotation_key(cid), frame, spec.path)
         ra.require_hits(cid, addresses, spec.path)
     street_geoms = geoms.get("streets") or {}
     if street_geoms and addresses:
@@ -272,7 +298,7 @@ def run(args):
     text = report.format_text(
         result.records, notices, settings_mod.effective_lines(st),
         settings_mod.override_lines(result.tally), inputs, _rollup_sections(ctx, result.records),
-        args.show)
+        args.show, more_hint=_more_hint(args), policy_line=_policy_line(args))
     rows = report.to_rows(result.records, frame)
     summary = dict(report.counts(result.records))
     body = (report.to_json(rows, notices, summary) if args.format == "json"
@@ -282,7 +308,7 @@ def run(args):
     used.extend(spec.path for spec in st.areas.values())
     if mcfg is not None:
         used.extend((mcfg.source_path, mcfg.exceptions_path, mcfg.names_path))
-    return report.exit_status(result.records), text, body, [p for p in used if p]
+    return report.exit_status(result.records, args.fail_on), text, body, [p for p in used if p]
 
 
 def main(argv=None):
