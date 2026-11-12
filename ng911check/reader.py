@@ -90,8 +90,8 @@ def _number(value, field, where, hard):
         return None
     try:
         f = float(value)
-    except (TypeError, ValueError):
-        f = None
+    except (TypeError, ValueError, OverflowError):
+        f = None    # a 400-digit integer: not a whole house number, and not a crash
     if f is not None and math.isfinite(f) and f.is_integer() and not isinstance(value, bool):
         return int(f)
     if hard:
@@ -126,7 +126,19 @@ def _plain_values(row, name, where):
             _fail(where, "property %s must be a string, a number or null, got %r"
                   % (key, value))
         if key not in _NUMERIC[name]:
-            row[key] = "%d" % value if float(value).is_integer() else repr(value)
+            row[key] = _number_text(value)
+
+
+def _number_text(value):
+    """A JSON number as the text a CSV would hold, without converting it to a float first.
+
+    json parses a 400-digit integer literal as a Python int, and float() on it raises
+    OverflowError, which escaped to the exit-70 traceback instead of the exit-2 refusal the
+    same value already gets in a coordinate (_finite catches it there).
+    """
+    if isinstance(value, int) or value.is_integer():
+        return "%d" % value
+    return repr(value)
 
 
 def _finite(v):
@@ -200,7 +212,15 @@ def _geometry(feature, where):
         return None, None
     if not isinstance(geom, dict) or not isinstance(geom.get("coordinates"), list):
         _fail(where, "geometry must be null or an object with coordinates")
-    return geom.get("type"), geom["coordinates"]
+    kind = geom.get("type")
+    if not isinstance(kind, str) or not kind:
+        # RFC 7946 makes "type" a required member. Without this refusal a geometry that has
+        # coordinates but no type was read exactly like "geometry": null, so a whole centerline
+        # silently disappeared (and XLAYER-13/17/18/19/STREET-14 then said the segment "has no
+        # line" while the file carried one), and an address point lost its position.
+        _fail(where, "geometry has no string 'type' (RFC 7946 requires one), so this feature "
+                     "would be read as having no geometry at all")
+    return kind, geom["coordinates"]
 
 
 def _read_geojson(path, name, renames):
@@ -271,7 +291,17 @@ def read_areas(path, key_prop):
         else:
             _fail(where, "an area layer takes Polygon or MultiPolygon, got %s" % kind)
         for poly in polygons:
-            rings = [[_pair(p, where) for p in ring] for ring in poly]
+            if not isinstance(poly, list):
+                _fail(where, "a MultiPolygon's coordinates must be a list of polygons, each a "
+                             "list of rings")
+            if poly and not isinstance(poly[0], list):
+                _fail(where, "a MultiPolygon's coordinates must be a list of polygons, each a "
+                             "list of rings; this one holds positions")
+            rings = []
+            for ring in poly:
+                if not isinstance(ring, list):
+                    _fail(where, "a polygon ring must be a list of positions, got %r" % (ring,))
+                rings.append([_pair(p, where) for p in ring])
             if not rings or any(len(r) < 4 or r[0] != r[-1] for r in rings):
                 _fail(where, "a polygon ring needs at least four positions and must close "
                       "(first position equal to last)")
@@ -303,7 +333,7 @@ def finalize_layer(layer, frame):
     return geoms
 
 
-def annotate_areas(addresses, areas, key, frame):
+def annotate_areas(addresses, areas, key, frame, source=""):
     """Set row[key] to the key of the first area that contains the address, else None.
 
     A polygon whose key is null or blank sets "" (inside, key unknown), never None, so a
@@ -312,7 +342,19 @@ def annotate_areas(addresses, areas, key, frame):
     the null key is never hidden behind an agreeing neighbour.
 
     A point on a polygon edge is not defined, and a point in two keyed overlapping polygons
-    takes the first in file order. Both are topology defects this package does not judge."""
+    takes the first in file order. Both are topology defects this package does not judge.
+
+    In a degrees run a ring vertex at 0, 0 is refused, as finalize_layer refuses one on a
+    centerline: forward() would place it millions of feet from the data, so one null-island
+    vertex reshapes the polygon into a wedge and every address inside that wedge counts as
+    inside the area, which hides "point not inside any area" behind a false clean run.
+    """
+    if frame.units == "degrees":
+        for area_key, rings in areas:
+            if any(p == NULL_ISLAND for ring in rings for p in ring):
+                _fail(source or "area layer",
+                      "the polygon with key %r has a vertex at 0, 0, which is not a position "
+                      "in a degrees file; remove or fix the vertex" % (area_key,))
     planar = [(k, [[frame.forward(x, y) for x, y in ring] for ring in rings])
               for k, rings in areas]
     for row in addresses:

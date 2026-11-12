@@ -86,6 +86,14 @@ def _parse_area(cid, value, base):
     fields = None
     if len(parts) > 2 and parts[2]:
         fields = tuple(f.strip() for f in parts[2].split(",") if f.strip())
+        # One field, one finding. response_area_checks emits a record per field occurrence, so
+        # 'ESN,ESN' silently doubled every finding, every roll-up count and every row of the
+        # --out file (the report then contradicted the data it listed: '4 point(s), e.g. rows
+        # 1,1,3,3'). The parser's contract is that a bad line fails loud.
+        dupes = sorted(set(f for f in fields if fields.count(f) > 1))
+        if dupes:
+            raise ValueError("[areas] %s: field %s is named more than once in %r, which would "
+                             "report every finding twice" % (cid, ", ".join(dupes), value))
     sentinel = parts[3].upper() if len(parts) > 3 and parts[3] else None
     return AreaSpec(path, parts[1], fields or None, sentinel)
 
@@ -250,6 +258,12 @@ def _check_note(cid, on):
     spec = registry.get(cid)
     if not on and spec is not None and SEVERITY.ERROR in spec.emits:
         return "  (can emit ERROR: its findings are NOT in this report)"
+    # A line that provably changes nothing is still printed, but it must SAY so: the
+    # [severity] section already annotates its no-ops ("no effect: every finding it emits
+    # stays where it is"), and an analyst auditing a tuned .ini could not tell which
+    # [checks] lines did anything.
+    if spec is not None and on == spec.default_on:
+        return "  (no effect: already %s by default)" % ("on" if on else "off")
     return ""
 
 
@@ -270,9 +284,17 @@ def effective_lines(st):
             note = _check_note(cid, on)
             out.append("  %-12s %s%s" % (cid, "on" if on else "off", note))
     if st.areas:
+        # Print the RESOLVED rule, not the raw spec. A line may replace the compared field and
+        # the sentinel, and both change every verdict: two settings files that compare
+        # different columns printed a byte-identical line, so a misspelled or wrong field list
+        # was invisible in the audit trail the report is supposed to be.
+        from .response_area_checks import resolve_rule
         out.append("Response-area rules:")
         for cid, spec in sorted(st.areas.items()):
-            out.append("  %-12s %s key=%s" % (cid, os.path.basename(spec.path), spec.key_prop))
+            rule = resolve_rule(cid, spec)
+            out.append("  %-12s %s key=%s fields=%s sentinel=%s" % (
+                cid, os.path.basename(spec.path), spec.key_prop, ",".join(rule.fields),
+                "(default)" if spec.sentinel is None else rule.sentinel))
     if st.severity:
         out.append("Severity overrides:")
         for cid, sv in sorted(st.severity.items()):
