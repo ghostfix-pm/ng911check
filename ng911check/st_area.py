@@ -6,6 +6,7 @@ from .st_fix import A, found, run
 def _in(cid, key, **kw):
     """An address annotated as sitting inside the polygon `key` of check cid (None: inside none)."""
     row = A(**kw)
+    row["_XY"] = (0.0, 0.0)
     row[ra.annotation_key(cid)] = key
     return row
 

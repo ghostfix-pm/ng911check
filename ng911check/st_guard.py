@@ -1,4 +1,5 @@
 """Self-test: a null polygon key, a reference layer with no hit, and the CSV formula guard."""
+import ast
 import csv
 import io
 import os
@@ -6,7 +7,7 @@ import os
 from . import geometry, reader, report, response_area_checks as ra
 from .geometry import Frame
 from .selftest import Tmp
-from .st_cli import HEADER, INI, LINE, call, collection, csv_file, feature
+from .st_cli import HEADER, INI, LINE, call, collection, csv_file, feature, props
 from .st_fix import A, AG, S
 from .st_io import SQUARE
 
@@ -21,6 +22,7 @@ BASE_ROW = {"check_id": "ADDR-05", "check_name": "name", "family": "address_attr
 
 def _in(key, cid="RA-08", **kw):
     row = A(**kw)
+    row["_XY"] = (0.0, 0.0)
     row[ra.annotation_key(cid)] = key
     return row
 
@@ -46,6 +48,7 @@ def section(h):
     c = h.check
     _null_key(c)
     _zero_hits(h)
+    _unplaced(c)
     _guard(c)
     with Tmp() as tmp:
         _cli(c, tmp)
@@ -83,6 +86,20 @@ def _null_key(c):
     c(rows[0]["_k"] == "B", "a point inside two keyed polygons takes the first in the file")
 
 
+def _unplaced(c):
+    # ---- an address with no position is not judged against a polygon
+    nowhere = A(ESN="7")
+    nowhere["_XY"] = None
+    nowhere[ra.annotation_key("RA-08")] = None
+    r = ra.check_ra_08([nowhere, _in("30", ESN="30")])
+    c(r == [], "ra-08 does not call an address with no position outside every polygon  <-- pinned defect")
+    c(ra.rollup([nowhere], ["RA-08"]) == [], "the roll-up leaves an address with no position out too  <-- pinned defect")
+    c(ra.coverage_notice([nowhere, _in("30", ESN="30")], {"RA-08"}).startswith("RA-08 left out 1 of 2 addresses that have no position, so ")
+      and ra.coverage_notice([nowhere], {"RA-10", "RA-08"}).startswith("RA-08 and RA-10 left out 1 of 1 addresses"),
+      "the notice names the running checks and counts the addresses that have no position")
+    c(ra.coverage_notice([nowhere], {"ADDR-05"}) is None and ra.coverage_notice([_in("30", ESN="30")], {"RA-08"}) is None, "no notice when no RA check runs or every address has a position")
+
+
 def _zero_hits(h):
     c = h.check
     inside = _in("30", ESN="20")
@@ -100,6 +117,17 @@ def _zero_hits(h):
     h.raises(lambda: geometry.require_street_overlap([(9000.0, 0.0)], [geometry.Polyline([[(0.0, 0.0), (10.0, 0.0)]])], "s"),
                  "require_street_overlap refuses a point more than a mile from the street extent  <-- pinned defect")
     c(geometry.require_street_overlap([(5280.0, 5280.0)], [geometry.Polyline([[(0.0, 0.0), (10.0, 0.0)]])], "s") == 1, "a point exactly a mile from the street extent counts as a hit")
+
+
+def _imports_report(src):
+    """True when the source imports the report module in any form."""
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, ast.Import) and any(a.name.split(".")[-1] == "report" for a in node.names):
+            return True
+        if isinstance(node, ast.ImportFrom) and ((node.module or "").split(".")[-1] == "report"
+                                                 or any(a.name == "report" for a in node.names)):
+            return True
+    return False
 
 
 def _guard(c):
@@ -127,8 +155,12 @@ def _guard(c):
     here = os.path.dirname(os.path.abspath(__file__))
     for name in ("reader.py", "msag.py", "crosswalks.py", "settings.py"):
         src = _read(os.path.join(here, name))
-        c("CSV_COLUMNS" not in src and "to_csv_text" not in src and "import report" not in src and ".report" not in src,
+        c("CSV_COLUMNS" not in src and "to_csv_text" not in src and not _imports_report(src),
           "%s does not read the findings file, so a read-back strip is not needed" % name)
+    for form in ("import report", "from . import report", "from . import cli, report", "from .report import cell",
+                 "from . import (" + chr(10) + "    cli," + chr(10) + "    report," + chr(10) + ")", "import ng911check.report", "from ng911check import report as rep"):
+        c(_imports_report(form + chr(10)), "the reader guard sees the import form %r  <-- pinned defect" % form)
+    c(not _imports_report("from . import reporting, common" + chr(10) + "x = 'import report'  # .report" + chr(10)), "the reader guard ignores a word that only looks like the report module")
 
 
 def _cli(c, tmp):
@@ -167,6 +199,15 @@ def _cli(c, tmp):
     c(code == 2 and "none of the 0 address point(s) with a position" in err, "addresses with no position cannot be placed in a layer, so the run is refused")
     code, out, err = call(["--addresses", addr_100, "--settings", ini])
     c(code == 0 and err == "", "a polygon layer with a hit and a matching ESN is a clean run")
+
+    # ---- an address with a null geometry is left out of the area check, with a notice
+    _areas(tmp, "esn.geojson", 100)
+    placed = feature("Point", [-30.4995, 29.10015], A(Add_Number=101, HOUSE_NU="101", ESN="100"))
+    lost = {"type": "Feature", "properties": props(A(Add_Number=103, HOUSE_NU="103", ESN="7")), "geometry": None}
+    half = tmp.write("half.geojson", collection(placed, lost))
+    code, out, err = call(["--addresses", half, "--settings", ini])
+    c(code == 0 and err == "" and "not inside any" not in out and "RA-08 left out 1 of 2 addresses that have no position" in out,
+      "an address with a null geometry is no finding, and the run says it left that row out  <-- pinned defect")
 
     # ---- the formula guard, through --out
     rows = [A(Site_NGUID=start + "id@" + AG, ESN="ABC", X=1000.0 + 10 * i, Y=1000.0) for i, (start, _n) in enumerate(STARTS)]

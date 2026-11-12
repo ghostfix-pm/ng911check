@@ -104,6 +104,28 @@ def required_fields(check_id, rule=None):
     return list((rule or DEFAULT_RULES[check_id]).fields)
 
 
+def _unplaced(row):
+    """True for a row the reader gave no position. Such a row cannot be placed in a polygon, so
+    "not inside any" would be a claim about a point that does not exist. A hand-made row with
+    no _XY key at all is a test annotation and counts as placed."""
+    return "_XY" in row and row["_XY"] is None
+
+
+def coverage_notice(addresses, running):
+    """One notice when running RA checks left out addresses that have no position, else None.
+
+    running holds the ids of the checks that run. The count is of addresses, not findings, so
+    a zero never reads as clean for rows the checks could not judge."""
+    ids = [c for c in CHECK_IDS if c in running]
+    lost = sum(1 for a in addresses if _unplaced(a))
+    if not ids or not lost:
+        return None
+    names = ", ".join(ids[:-1]) + " and " + ids[-1] if len(ids) > 1 else ids[0]
+    return ("%s left out %d of %d addresses that have no position, so their stored values were "
+            "not compared with a polygon. A CSV needs X and Y columns, or --x-field and "
+            "--y-field; a GeoJSON feature needs a Point geometry." % (names, lost, len(addresses)))
+
+
 def _describe(field, stored, poly_val, inside, layer_label, sentinel):
     """One comparison: return (description, is_blank_inside), or (None, False) when the stored
     value is consistent with (or cannot be contradicted by) the containing polygon.
@@ -145,6 +167,8 @@ def _iter_findings(addresses, check_id, rule=None):
     rule = rule or DEFAULT_RULES[check_id]
     annot = annotation_key(check_id)
     for a in addresses:
+        if _unplaced(a):
+            continue
         poly_key = a.get(annot)
         inside = poly_key is not None
         poly_val = _clean(poly_key).upper()

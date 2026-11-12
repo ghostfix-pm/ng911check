@@ -56,7 +56,7 @@ def listing(tmp):
 
 def section(h):
     c = h.check
-    c(__version__ == "0.3.0", "the package version is 0.2.0")
+    c(__version__ == "0.3.0", "the package version is 0.3.0")
 
     # ---- the quiet commands
     code, out, err = call(["--version"])

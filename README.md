@@ -135,7 +135,7 @@ PASS  a GeoJSON run reports STREET-14, XLAYER-17, XLAYER-18 and XLAYER-19 on the
 ...
 PASS  a correct address on a street whose segments share SEGMENT_ID '' is not flagged  <-- pinned defect
 ...
-PASS  an address file with no X and Y columns says the three checks judged nothing, not a clean pass  <-- pinned defect
+PASS  an address file with no X and Y columns beside a street layer exits 2 and prints no report, not a clean pass  <-- pinned defect
 ...
 PASS  an MSAG config error is exit 2 and reads: quoted.json: max_source_age_days must be a whole number of days, or null  <-- pinned defect
 ...
@@ -160,20 +160,20 @@ PASS  ADDR-05 declares exactly the columns it reads
 PASS  the package folder holds Python files only, so no vendor domain file ships  <-- pinned defect
 ...
 --------------------------------------------------------------------
-975 assertions, 0 failed
+988 assertions, 0 failed
 ```
 
-The full run prints all 975 assertions. Each `...` line above is where the block is cut.
+The full run prints all 988 assertions. Each `...` line above is where the block is cut.
 `python -m ng911check --self-test` exits 0 when every assertion passes and 1 when one fails.
 
 | Host | Python | Assertions |
 |---|---|---|
-| Windows | 3.13.2 | 975 assertions, 0 failed |
-| Windows | 3.12.10 | 975 assertions, 0 failed |
-| Windows | 3.11.15 | 975 assertions, 0 failed |
-| Windows | 3.10.20 | 975 assertions, 0 failed |
-| Windows | 3.9.25 | 975 assertions, 0 failed |
-| Ubuntu | 3.12.3 | 975 assertions, 0 failed |
+| Windows | 3.13.2 | 988 assertions, 0 failed |
+| Windows | 3.12.10 | 988 assertions, 0 failed |
+| Windows | 3.11.15 | 988 assertions, 0 failed |
+| Windows | 3.10.20 | 988 assertions, 0 failed |
+| Windows | 3.9.25 | 988 assertions, 0 failed |
+| Ubuntu | 3.12.3 | 988 assertions, 0 failed |
 
 The Windows 3.9, 3.10 and 3.11 rows run on uv-managed builds of CPython. The self-test also parses
 every source file with `feature_version=(3, 9)`. A separate assertion walks the syntax tree and
@@ -182,13 +182,13 @@ fails on an f-string, because the parse alone accepts one. The Ubuntu row is 3.1
 The counts are equal on every host because the self-test never branches on the platform. It writes
 its files to a temporary folder and removes the folder at the end.
 
-`coverage run --branch -m ng911check --self-test` (coverage 7.16.1) reports 100 percent of 5141
-statements and 1496 branches for the whole package, the test modules included. One line carries a
+`coverage run --branch -m ng911check --self-test` (coverage 7.16.1) reports 100 percent of 5184
+statements and 1510 branches for the whole package, the test modules included. One line carries a
 `pragma: no branch`. It is the loop in `Polyline.midpoint` in `geometry.py`. That loop never ends
 normally, because its last segment always returns. Branch coverage cannot see that. The reader
 refuses a line part with fewer than two positions, so only a `Polyline` built in code with a part of fewer than two vertices
 can make `midpoint` return `None`. The production modules alone, without the
-`st_*.py` test modules and `selftest.py`, also reach 100 percent of 3074 statements and 1438
+`st_*.py` test modules and `selftest.py`, also reach 100 percent of 3088 statements and 1444
 branches.
 
 ## What already exists
@@ -283,7 +283,7 @@ python -m ng911check --catalog-check README.md
 | `--msag CSV` | none | The MSAG as a CSV. It turns on XLAYER-16. |
 | `--msag-config JSON` | none | The MSAG column map, header row, floors and a pinned SHA-256. |
 | `--msag-exceptions CSV` | none | MSAG records to leave out of the match rate. See The MSAG numbers. |
-| `--street-names CSV` | none | An authoritative street-name list for STREET-11. |
+| `--street-names CSV` | none | An authoritative street-name list for STREET-11. It needs `--msag` or `--msag-config`; alone it is refused with exit 2. |
 | `--optional` | off | Also run the checks that are off by default. |
 | `--show N` | `20` | How many findings to print. A whole number of zero or more; a negative value exits 64. |
 | `--format` | `csv` | Format of the `--out` file: `csv` or `json`. |
@@ -341,8 +341,8 @@ covers `check_id`, `check_name`, `family`, `severity`, `layer`, `nguid` and `des
 quoted. The `csv` module of Python 3.9 and 3.10 leaves a bare carriage return unquoted when the
 line end is LF, and that would split the row in two. The `--format json` file is not guarded, because
 a spreadsheet does not open JSON. This package never reads its own findings file back, so it has
-no code that strips the apostrophe. The self-test fails if a reader module starts to use the
-report module.
+no code that strips the apostrophe. The self-test fails if `reader.py`, `msag.py`, `crosswalks.py` or `settings.py` imports the
+report module, in any import form.
 
 ## Inputs
 
@@ -737,8 +737,8 @@ ESN rule in ADDR-05, one to five digits and not zero, is also a local choice.
   that also overlaps its neighbour. STREET-04 reports the overlap.
 - Points on a polygon edge, and points in two overlapping polygons, take the first polygon in the
   file. Both are topology defects, which this package does not judge.
-- STREET-11 without a name list is a heuristic and reports at INFO. A name list or an MSAG turns on
-  the real check.
+- STREET-11 without an MSAG is a heuristic and reports at INFO. An MSAG turns on the real check. A
+  `--street-names` list is read only beside `--msag` or `--msag-config`; alone it is refused with exit 2.
 - The checks that need a street geometry (XLAYER-05, XLAYER-13, XLAYER-17, XLAYER-18, XLAYER-19,
   STREET-14) need a GeoJSON street layer.
 - The saint names that XLAYER-10 expands (`ST BENEDICT` to `SAINT BENEDICT`) are a closed list in
@@ -757,10 +757,13 @@ ESN rule in ADDR-05, one to five digits and not zero, is also a local choice.
 - A layer named in `[areas]` is checked for hits even when its check is off in `[checks]`, so remove the `[areas]` line as well.
 - The `--out` CSV guard looks at the first character only. A cell that starts with a space or a line feed before `=`, `+`, `-` or `@` is not prefixed, and neither is a cell that starts with a full-width `=`, `+`, `-` or `@`. The OWASP page lists the line feed and the full-width forms as formula starters, and this tool follows the six characters of its specification. The OWASP page also says the single-quote prefix is not reliable in Excel after the CSV is saved and opened again, and it advises a tab character inside the quoted field. This tool uses the quote. The guard applies to the `--out` CSV only. The text report and the JSON file are never guarded.
 - An error message for a bad settings or MSAG config value quotes that value. The tool never asks for a credential, but a secret typed into such a field would reach the terminal.
+- A polygon layer that holds a feature with null geometry is refused whole, with exit 2 and the message `an area layer takes Polygon or MultiPolygon, got None`. Remove that feature first.
+- The reader guard in the self-test checks only `reader.py`, `msag.py`, `crosswalks.py` and `settings.py`. A new reader module outside that list is not checked against importing the report module.
+- The message for a SHA-256 mismatch in the MSAG config shows only the first 12 hex characters of the actual and of the pinned digest, so compare the full digest with a hash tool.
 - The self-test removes its temporary folder with `ignore_errors=True`. A locked folder on Windows stays behind without a message.
 - Column names are matched with their exact case. A file with lowercase headers gets a missing-column notice and many blank-field errors, such as `DiscrpAgID None invalid`, instead of one clear message.
 - A CSV row with more cells than the header is read with the extra cells dropped, and no notice is printed. An unquoted comma inside a value hides the shift, so quote values that contain commas.
-- Rows without a geometry, a GeoJSON feature with null geometry or a CSV row without X and Y, are left out of the distance and side checks. XLAYER-17, XLAYER-18, XLAYER-19 and STREET-14 count them in a notice. The other checks do not count them, and the response-area checks call such a row `not inside any` polygon. A run in which no address row has a position is refused for any `[areas]` line.
+- Rows without a geometry, a GeoJSON feature with null geometry or a CSV row without X and Y, are left out of the distance and side checks. XLAYER-17, XLAYER-18, XLAYER-19 and STREET-14 count them in a notice. The response-area checks leave such a row out and count it in a notice, for example `RA-08 left out 1 of 2 addresses that have no position`, because a row with no position cannot be placed in a polygon. The other checks do not count them. A run in which no address row has a position is refused for any `[areas]` line.
 - In a feet or meters run, a position of 0, 0 is a real position. In a degrees run any other stand-in value that lies inside the degree range, such as -1, -1, is read as a real position.
 - Swapped longitude and latitude inside the degree range cannot be detected. The run gives no error and no notice.
 - An address far from its street is reported at INFO by XLAYER-05 when its number falls inside a range of a same-name segment. INFO never changes the exit code, even with `--optional`.

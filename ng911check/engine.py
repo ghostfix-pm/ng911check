@@ -4,7 +4,7 @@ from collections import defaultdict, namedtuple
 from .model import Context, RANK, SEVERITY, remap_severity
 from .crosswalks import load_crosswalks
 from .common import normalize
-from . import rangefit, registry
+from . import rangefit, registry, response_area_checks
 
 # What run_report returns. `tally` says what each [severity] line did on this run.
 Result = namedtuple("Result", "records notices tally")
@@ -198,6 +198,9 @@ def run_report(addresses, streets, ctx, priority=None, family=None, target=None,
     if "STREET-11" in {s.id for s in specs} and getattr(ctx, "authoritative_names", None) is None:
         notices.append(DEGRADED_NOTICE["STREET-11"])
     notices.extend(rangefit.coverage_notices(addresses, streets, ctx, {s.id for s in specs}))
+    area_notice = response_area_checks.coverage_notice(addresses, {s.id for s in specs})
+    if area_notice:
+        notices.append(area_notice)
     records = []
     for spec in specs:
         records.extend(spec.func(addresses, streets, ctx) or [])
