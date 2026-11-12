@@ -101,8 +101,16 @@ _SAME_ROAD_MAX_FT = 600.0
 
 
 def _shared_city(a, b):
-    ca = {a.get("LCITY"), a.get("RCITY")} - {None, ""}
-    cb = {b.get("LCITY"), b.get("RCITY")} - {None, ""}
+    """True when two segments share a community, compared after stripping and upper-casing.
+
+    The raw strings are not comparable: a centerline export can spell one city 'TESTVILLE' on
+    one row and 'Testville ' on the next. Compared raw, the sets are disjoint, the pair reads
+    as two different roads, and STREET-12 then suppresses a real mid-street numbering gap -
+    while STREET-13's _confirmed_different_community, normalizing since it was written, keeps
+    its finding on the same two rows. Same comparison, one place.
+    """
+    ca = {str(v).strip().upper() for v in (a.get("LCITY"), a.get("RCITY")) if v not in (None, "")}
+    cb = {str(v).strip().upper() for v in (b.get("LCITY"), b.get("RCITY")) if v not in (None, "")}
     return bool(ca & cb)
 
 

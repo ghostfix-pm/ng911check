@@ -1,6 +1,6 @@
 """cross_layer checks: address points against street centerlines, and the optional MSAG."""
 from .model import ErrorRecord, SEVERITY, FAMILY
-from .common import normalize, esn_eq, _clean, is_addressable, seg_label
+from .common import normalize, esn_eq, _clean, is_addressable, seg_label, address_number
 from . import registry
 from . import msag
 import re
@@ -154,8 +154,8 @@ def check_xlayer_01(addresses, streets, ctx):
 @registry.check(id="XLAYER-02", family=FAMILY.CROSS, severity=SEVERITY.ERROR,
                 priority="v1-core", target="both",
                 emits=(SEVERITY.ERROR,), summary="Flag an address number that lies outside every range of its street.",
-                fields=("Add_Number", "FROMLEFT", "FROMRIGHT", "PREFIX", "Parity_L",
-                        "Parity_R", "STREET_NA", "SUFFIX",
+                fields=("Add_Number", "FROMLEFT", "FROMRIGHT", "PREFIX",
+                        "STREET_NA", "SUFFIX",
                         "Site_NGUID", "TOLEFT", "TORIGHT", "TYPE",), requires=())
 def check_xlayer_02(addresses, streets, ctx):
     out = []
@@ -172,21 +172,22 @@ def check_xlayer_02(addresses, streets, ctx):
         if not names or all(ctx.name_ignored(n) for n in names):
             continue
         # XLAYER-02 is the RANGE check: the street name exists but the house number is
-        # outside every matching segment's range. The name-ABSENT case is XLAYER-04's
-        # (it fires when the address's true component name `akey` is not in any
-        # centerline). Defer exactly that case so the same address is not reported under
-        # both checks -- a "not within any range" message is meaningless when the road
-        # name does not exist. (akey blank = _NAMEKEY-only address; XLAYER-04 skips those,
-        # so XLAYER-02 still checks them via _NAMEKEY -- no overlap either way.)
+        # outside every matching segment's range. Coverage here is RANGE-ONLY, which is what
+        # the catalog says ("outside every range") and what XLAYER-03 already does: a
+        # centerline whose parity code is wrong (E/O swapped, 'Z', a numeric 0) or whose
+        # endpoint is 0 covers nothing under a parity-aware test, so a number sitting inside
+        # 101-199 used to produce a routing-level ERROR whose text ("not within any matching
+        # segment range") was simply false, once per address, on top of the parity finding
+        # STREET-02 and XLAYER-03 already emit. The parity contradiction is their finding.
+        # A 0/negative endpoint is still not coverage, so a broken range still lands here.
+        # The name-ABSENT case stays XLAYER-04's: a "not within any range" message is
+        # meaningless when the road name does not exist in the centerline at all.
         if akey and akey not in ctx.streets_by_name:
             continue
-        try:
-            num = int(a.get("Add_Number"))
-        except (TypeError, ValueError):
-            continue
-        if num <= 0:   # is_addressable already requires a non-blank name
-            continue
-        if not _covering_segments(a, ctx):
+        num = address_number(a.get("Add_Number"))
+        if num is None or num <= 0:
+            continue   # is_addressable requires a positive number; stay safe if it did not
+        if not _range_only_segments(a, ctx):
             out.append(ErrorRecord(
                 "XLAYER-02", "Address number not within any matching road range",
                 FAMILY.CROSS, SEVERITY.ERROR, "address", a["_OID"],
@@ -296,6 +297,8 @@ def check_xlayer_13(addresses, streets, ctx):
             along, dist, right = seg_geom.query(*a["_XY"])
             if along <= 0.5 or along >= seg_geom.length - 0.5:
                 continue  # foot at an endpoint -> side undefined
+            if right is None:
+                continue  # on the centerline -> no side, so no wrong side (see geometry.Polyline)
             if best is None or dist < best[0]:
                 best = (dist, s, parity_side, right)
         if best is None:

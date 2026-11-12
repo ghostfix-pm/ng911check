@@ -90,7 +90,10 @@ class Polyline(object):
         """Return (along, distance, on_right) for the nearest point on the line.
 
         `along` is the distance from the start of the first part to the nearest point.
-        `on_right` is True when the point lies to the right of the direction of travel."""
+        `on_right` is True when the point lies to the right of the direction of travel and
+        False when it lies to the left. A point exactly ON the line has no side, so
+        `on_right` is None: reporting it as left (or right) decided a wrong-side verdict by
+        the house number's parity instead of by geometry."""
         best = None
         offset = 0.0
         for part in self.parts:
@@ -100,7 +103,8 @@ class Polyline(object):
                 dist, foot = p_distance(x, y, x1, y1, x2, y2)
                 if best is None or dist < best[1]:
                     along = offset + run + math.hypot(foot[0] - x1, foot[1] - y1)
-                    best = (along, dist, side_of_line(x, y, x1, y1, x2, y2) == "Right")
+                    side = side_of_line(x, y, x1, y1, x2, y2)
+                    best = (along, dist, None if side is None else side == "Right")
                 run += seg
             offset += run
         return best

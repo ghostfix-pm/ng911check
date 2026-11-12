@@ -41,6 +41,16 @@ def section(h):
     c(len(r) == 0, "xlayer-02 skips an ignored street name")
     r = run([A(STREET_NA="", TYPE="", _NAMEKEY="ELM ST", Add_Number=301, HOUSE_NU="301")], [S()], ["XLAYER-02"])
     c(found(r, "XLAYER-02") == 1, "xlayer-02 still checks a point named only by its _NAMEKEY")
+    # The number sits INSIDE 101-199; only the declared parity is wrong. That is STREET-02's and
+    # XLAYER-03's finding, and the old parity-aware coverage test made xlayer-02 state the
+    # opposite of the data once per address ("not within any matching segment range").
+    r = run([A()], [S(Parity_L="E")], ["XLAYER-02"])
+    c(r == [] and found(run([A()], [S(Parity_L="E")], ["XLAYER-03"]), "XLAYER-03", "WARNING", "parity O vs side E") == 1,
+      "xlayer-02 does not call a number outside the range when only the parity code is wrong  <-- pinned defect")
+    r = run([A(Add_Number=3, HOUSE_NU="3")], [S(FROMLEFT=0, TOLEFT=0, FROMRIGHT=0, TORIGHT=0,
+                                                Parity_L="Z", Parity_R="Z")], ["XLAYER-02"])
+    c(found(r, "XLAYER-02", "ERROR", "house number 3") == 1,
+      "xlayer-02 still reports a number no range covers when both sides are 0-0")
 
     # ---- XLAYER-12 ties
     r = run([A()], [S(), S()], ["XLAYER-12"])
@@ -62,6 +72,8 @@ def section(h):
 
     # ---- XLAYER-13 geometric side
     s = _street_on_line()
+    r = run([A(Add_Number=100, HOUSE_NU="100", _XY=(500.0, 0.0))], [s], ["XLAYER-13"], **GEO)
+    c(r == [], "xlayer-13 does not judge a point that lies exactly on the centerline  <-- pinned defect")
     r = run([A(_XY=(500.0, 50.0)), A(_XY=(500.0, -50.0))], [s], ["XLAYER-13"], **GEO)
     c(found(r, "XLAYER-13", "WARNING", "geometric side Right != parity side Left") == 1 and found(r, "XLAYER-13") == 1,
       "xlayer-13 flags an odd number south of an eastbound line and passes one north of it")

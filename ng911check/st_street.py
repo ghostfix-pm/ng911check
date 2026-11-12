@@ -164,6 +164,12 @@ def section(h):
     line(b2, (200.0, 0.0), (300.0, 0.0))
     r = run([], [a2, b2], ["STREET-12"])
     c(len(r) == 0, "street-12 ignores a gap when the two stretches share no community")
+    a3, b3 = S(**LEFT_ONLY), S(FROMLEFT=301, TOLEFT=399, LCITY=" Testville", RCITY="testville", **LEFT_ONLY)
+    line(a3, (0.0, 0.0), (100.0, 0.0))
+    line(b3, (200.0, 0.0), (300.0, 0.0))
+    r = run([], [a3, b3], ["STREET-12"])
+    c(found(r, "STREET-12", "WARNING", "gap 199-301") == 1,
+      "street-12 compares the community after stripping and upper-casing, so a case difference cannot suppress a real gap  <-- pinned defect")
 
     # ---- STREET-13 ESN and ZIP changes
     r = run([], [S(LESN="100", **LEFT_ONLY), S(FROMLEFT=201, TOLEFT=299, LESN="200", **LEFT_ONLY)], ["STREET-13"])

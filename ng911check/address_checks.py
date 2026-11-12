@@ -2,7 +2,7 @@
 import re
 
 from .model import ErrorRecord, SEVERITY, FAMILY
-from .common import normalize, nguid_partition, _clean, is_addressable
+from .common import normalize, nguid_partition, _clean, is_addressable, address_number
 from . import registry
 
 
@@ -300,12 +300,9 @@ def check_addr_08(addresses, streets, ctx):
     for a in addresses:
         if is_addressable(a):
             continue
-        num = a.get("Add_Number")
+        num = address_number(a.get("Add_Number"))
         nm = _clean(a.get("_NAMEKEY"))
-        try:
-            no_num = int(num) <= 0   # mirror is_addressable: tolerate float/str Add_Number
-        except (TypeError, ValueError):
-            no_num = True
+        no_num = num is None or num <= 0   # mirror is_addressable, fraction included
         if no_num and not nm:
             msg = "missing house number and street name"
         elif no_num:

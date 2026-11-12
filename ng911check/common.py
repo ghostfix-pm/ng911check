@@ -21,14 +21,31 @@ def seg_label(row):
     return _clean(row.get("SEGMENT_ID")) or "OID %s" % row.get("_OID")
 
 
+def address_number(value):
+    """The house number as an int, or None when the value is not a usable number.
+
+    A fractional JSON number is refused, not truncated: int(5.5) is 5, so a GeoJSON file
+    that stores 5.5 would be validated as house number 5 (ADDR-03 built its expected text
+    from 5, the range checks matched 5, and ADDR-08 stayed silent) while the same value in a
+    CSV is the text '5.5', which int() rejects. One value, two verdicts, and the GeoJSON path
+    silently rewrote the number. A whole float (13.0) is still a number.
+    """
+    if isinstance(value, float):
+        if not value.is_integer():
+            return None
+        return int(value)
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def is_addressable(a):
     """True if the row is a real, validatable address: a positive house number AND a
     street name. Placeholder rows (house number 0, blank name) are reported once by
     ADDR-08, not re-flagged by every address-content check."""
-    num = a.get("Add_Number")
-    try:
-        num = int(num)
-    except (TypeError, ValueError):
+    num = address_number(a.get("Add_Number"))
+    if num is None:
         return False
     return num > 0 and bool((a.get("_NAMEKEY") or "").strip())
 

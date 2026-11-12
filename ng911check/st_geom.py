@@ -36,7 +36,8 @@ def section(h):
     along, dist, right = pl.query(30.0, 40.0)
     c(abs(along - 30.0) < 1e-9 and abs(dist - 40.0) < 1e-9 and right is False and pl.length == 100.0, "query returns the distance along, the distance off and the side of a point left of travel")
     c(pl.query(30.0, -40.0)[2] is True and pl.distance_to(30.0, -40.0) == 40.0, "query puts a point south of an eastbound line on the right")
-    c(pl.query(30.0, 0.0)[2] is False, "a point exactly on the line is on neither side")
+    c(pl.query(30.0, 0.0)[2] is None and pl.query(30.0, 0.0)[1] == 0.0,
+      "a point exactly on the line has no side, so query says None rather than Left  <-- pinned defect")
     multi = geometry.Polyline([[(0.0, 0.0), (100.0, 0.0), (100.0, 100.0)], [(500.0, 0.0), (600.0, 0.0)], [(1.0, 1.0)]])
     c(multi.length == 300.0 and len(multi.parts) == 2, "a polyline sums its parts and drops a one-vertex part")
     c(abs(multi.query(550.0, 5.0)[0] - 250.0) < 1e-9 and multi.query(100.0, 40.0)[0] == 140.0, "the distance along counts the parts before the nearest one")
