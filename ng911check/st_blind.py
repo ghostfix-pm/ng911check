@@ -158,8 +158,12 @@ def section(h):
         no_xy = csv_file(tmp, "noxy.csv", ("Add_Number", "STREET_NA", "TYPE", "POINT_X", "POINT_Y"),
                          [{"Add_Number": 105, "STREET_NA": "ELM", "TYPE": "ST", "POINT_X": 500, "POINT_Y": 30}, {"Add_Number": 107, "STREET_NA": "ELM", "TYPE": "ST", "POINT_X": 600, "POINT_Y": 30}])
         code, out, err = call(["--addresses", no_xy] + args)
-        c("XLAYER-17, XLAYER-18 and XLAYER-19 judged no address: none of the 2 addresses has a position." in out and "--x-field and --y-field" in out and "Notices: " in out,
-          "an address file with no X and Y columns says the three checks judged nothing, not a clean pass  <-- pinned defect")
+        c(code == 2 and out == "" and "none of the 2 address(es) has a position" in err and "--x-field and --y-field" in err,
+          "an address file with no X and Y columns beside a street layer exits 2 and prints no report, not a clean pass  <-- pinned defect")
+        allnull = tmp.write("allnull.geojson", collection(_bare(None, props(A(Add_Number=105, HOUSE_NU="105"))), _bare(None, props(A(Add_Number=107, HOUSE_NU="107")))))
+        code, out, err = call(["--addresses", allnull] + args)
+        c(code == 2 and out == "" and "none of the 2 address(es) has a position" in err,
+          "a GeoJSON address file whose geometries are all null beside a street layer exits 2  <-- pinned defect")
         code, out, err = call(["--addresses", no_xy, "--x-field", "POINT_X", "--y-field", "POINT_Y"] + args)
         c("judged no address" not in out and "left out" in out and "1 of 2 street segments that have an address range and no line" in out,
           "naming the coordinate columns lifts the notice, and a ranged street with a null geometry is counted  <-- pinned defect")

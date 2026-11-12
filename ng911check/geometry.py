@@ -133,10 +133,11 @@ STREET_EXTENT_MARGIN_FT = 5280.0
 def require_street_overlap(points, lines, path):
     """The number of points inside the bounding box of every street vertex, widened by a mile.
 
-    Raises ValueError when points exist and none is inside. A street layer in another
-    coordinate system puts every point far from every line, so XLAYER-17, XLAYER-18 and
-    XLAYER-19 would judge nothing and zero findings would read as clean. Returns 0 without
-    raising when no point has a position, because there is nothing to compare."""
+    Raises ValueError when points exist and none is inside, and when points exist and none has
+    a position. A street layer in another coordinate system puts every point far from every
+    line, and an address file with no positions gives the checks nothing to measure. Either way
+    XLAYER-17, XLAYER-18 and XLAYER-19 would judge nothing and zero findings would read as
+    clean. Returns 0 without raising when there is no point at all."""
     verts = [v for line in lines for part in line.parts for v in part]
     xs = [v[0] for v in verts]
     ys = [v[1] for v in verts]
@@ -144,6 +145,11 @@ def require_street_overlap(points, lines, path):
     lox, hix, loy, hiy = min(xs) - m, max(xs) + m, min(ys) - m, max(ys) + m
     placed = [p for p in points if p is not None]
     hits = sum(1 for x, y in placed if lox <= x <= hix and loy <= y <= hiy)
+    if points and not placed:
+        raise ValueError("none of the %d address(es) has a position, so the street checks "
+                         "judged nothing and a result with no finding would read as clean. "
+                         "Check the coordinate columns (--x-field and --y-field) or the "
+                         "geometry of the address file, or drop %s." % (len(points), path))
     if placed and not hits:
         raise ValueError("none of the %d address point(s) with a position lies within the "
                          "extent of the street geometry in %s, so the street checks judged "

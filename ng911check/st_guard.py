@@ -93,8 +93,10 @@ def _zero_hits(h):
     for label, rows in (("no point inside", [outside]), ("no address row", []), ("no position", [A()])):
         h.raises(lambda r=rows: ra.require_hits("RA-08", r, "esn.geojson"), "require_hits refuses a layer with %s  <-- pinned defect" % label)
     c(geometry.require_street_overlap([(5.0, 5.0)], [geometry.Polyline([[(0.0, 0.0), (10.0, 0.0)]])], "s") == 1
-      and geometry.require_street_overlap([None], [geometry.Polyline([[(0.0, 0.0), (10.0, 0.0)]])], "s") == 0,
-      "require_street_overlap counts a point near the street and does not judge a run with no positioned point")
+      and geometry.require_street_overlap([], [geometry.Polyline([[(0.0, 0.0), (10.0, 0.0)]])], "s") == 0,
+      "require_street_overlap counts a point near the street and has nothing to refuse when there is no point")
+    h.raises(lambda: geometry.require_street_overlap([None, None], [geometry.Polyline([[(0.0, 0.0), (10.0, 0.0)]])], "s"),
+             "require_street_overlap refuses addresses that all lack a position  <-- pinned defect")
     h.raises(lambda: geometry.require_street_overlap([(9000.0, 0.0)], [geometry.Polyline([[(0.0, 0.0), (10.0, 0.0)]])], "s"),
                  "require_street_overlap refuses a point more than a mile from the street extent  <-- pinned defect")
     c(geometry.require_street_overlap([(5280.0, 5280.0)], [geometry.Polyline([[(0.0, 0.0), (10.0, 0.0)]])], "s") == 1, "a point exactly a mile from the street extent counts as a hit")

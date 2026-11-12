@@ -160,20 +160,20 @@ PASS  ADDR-05 declares exactly the columns it reads
 PASS  the package folder holds Python files only, so no vendor domain file ships  <-- pinned defect
 ...
 --------------------------------------------------------------------
-973 assertions, 0 failed
+975 assertions, 0 failed
 ```
 
-The full run prints all 973 assertions. Each `...` line above is where the block is cut.
+The full run prints all 975 assertions. Each `...` line above is where the block is cut.
 `python -m ng911check --self-test` exits 0 when every assertion passes and 1 when one fails.
 
 | Host | Python | Assertions |
 |---|---|---|
-| Windows | 3.13.2 | 973 assertions, 0 failed |
-| Windows | 3.12.10 | 973 assertions, 0 failed |
-| Windows | 3.11.15 | 973 assertions, 0 failed |
-| Windows | 3.10.20 | 973 assertions, 0 failed |
-| Windows | 3.9.25 | 973 assertions, 0 failed |
-| Ubuntu | 3.12.3 | 973 assertions, 0 failed |
+| Windows | 3.13.2 | 975 assertions, 0 failed |
+| Windows | 3.12.10 | 975 assertions, 0 failed |
+| Windows | 3.11.15 | 975 assertions, 0 failed |
+| Windows | 3.10.20 | 975 assertions, 0 failed |
+| Windows | 3.9.25 | 975 assertions, 0 failed |
+| Ubuntu | 3.12.3 | 975 assertions, 0 failed |
 
 The Windows 3.9, 3.10 and 3.11 rows run on uv-managed builds of CPython. The self-test also parses
 every source file with `feature_version=(3, 9)`. A separate assertion walks the syntax tree and
@@ -182,13 +182,13 @@ fails on an f-string, because the parse alone accepts one. The Ubuntu row is 3.1
 The counts are equal on every host because the self-test never branches on the platform. It writes
 its files to a temporary folder and removes the folder at the end.
 
-`coverage run --branch -m ng911check --self-test` (coverage 7.16.1) reports 100 percent of 5135
-statements and 1494 branches for the whole package, the test modules included. One line carries a
+`coverage run --branch -m ng911check --self-test` (coverage 7.16.1) reports 100 percent of 5141
+statements and 1496 branches for the whole package, the test modules included. One line carries a
 `pragma: no branch`. It is the loop in `Polyline.midpoint` in `geometry.py`. That loop never ends
 normally, because its last segment always returns. Branch coverage cannot see that. The reader
-refuses a line part with fewer than two positions, so a `Polyline` built in code with a one-vertex
-part is the only way to make `midpoint` return `None`. The production modules alone, without the
-`st_*.py` test modules and `selftest.py`, also reach 100 percent of 3072 statements and 1436
+refuses a line part with fewer than two positions, so only a `Polyline` built in code with a part of fewer than two vertices
+can make `midpoint` return `None`. The production modules alone, without the
+`st_*.py` test modules and `selftest.py`, also reach 100 percent of 3074 statements and 1438
 branches.
 
 ## What already exists
@@ -427,7 +427,10 @@ Two rules keep a polygon layer from giving a false clean result.
 - A street layer that holds geometry, with no address point inside its bounding box widened by one
   mile (5,280 ft), is refused the same way, with exit 2, no report and no file written. Without it
   XLAYER-17, XLAYER-18 and XLAYER-19 judged nothing for a street file in another coordinate
-  system, and the run exited 0. A street file in CSV form has no geometry and is not tested.
+  system, and the run exited 0. The same refusal holds when addresses exist and none has a
+  position, for example a CSV with no X and Y columns or a GeoJSON file whose geometries are all
+  null, because the three checks then judged no address. A street file in CSV form has no geometry
+  and is not tested.
 - An MSAG with no eligible record, because the file has no data rows or every record is excepted,
   is refused with exit 2, no report and no file written. Its 100 percent rate compared nothing.
 
@@ -511,10 +514,12 @@ Each of the four reads positions only. None edits a point or a line.
 
 An address with no position, and a street segment that has an address range but no line, drop out of
 these checks. The run prints a NOTICE with the counts, for example `XLAYER-17, XLAYER-18 and XLAYER-19 left
-out 1 of 2 addresses that have no position`, and a `Notices:` line under the finding counts. When no
-address has a position, the notice says the checks judged no address. A run without `--addresses` skips
+out 1 of 2 addresses that have no position`, and a `Notices:` line under the finding counts. When a
+street layer holds geometry and no address has a position, the run is refused with exit 2 instead (see
+the refusals above). A run without `--addresses` skips
 XLAYER-17, XLAYER-18 and XLAYER-19, and a street file in CSV form skips all four. The exit code does not
-change in any of these cases, so read the notices before you trust a zero.
+change when only some addresses lack a position, when `--addresses` is missing, or for a CSV street file,
+so read the notices before you trust a zero.
 
 **XLAYER-18.** The covering segment is the same-name segment whose range and parity contain the
 number. The nearest other segment is the nearest same-name segment that does not. The check reports
@@ -597,7 +602,7 @@ the limit is reported, and a displacement exactly at the limit is kept. It also 
 exactly a foot, ranges that touch at one number, the rank correlation of 0.5, and the half-foot margin
 from a line end and from the line itself. It runs the four checks end to end from two GeoJSON files
 through the reader and the command line. It also runs a street file with no geometry, which skips all
-four checks with a notice, an address file with no positions, and a street with a null geometry. The
+four checks with a notice, an address file with no positions (refused with exit 2), and a street with a null geometry. The
 checks have no network path, so no local `http.server` stub applies.
 
 No mutation-testing script ships with the package. The evidence for the self-test is its branch coverage
@@ -772,10 +777,13 @@ ESN rule in ADDR-05, one to five digits and not zero, is also a local choice.
 - XLAYER-17 leaves out a point within half a foot of the centerline, so a layer of points snapped onto the line gets no XLAYER-17 verdict at all.
 - XLAYER-19 reports nothing for a point whose street name matches no segment in the street layer, because it has no own street to measure. XLAYER-04 is the check for that case.
 - XLAYER-18 and XLAYER-19 test every same-name or ranged segment for every point, so a layer with hundreds of thousands of points and thousands of segments of one street name runs for a long time.
+- A street layer is refused for a lack of address positions only when the street file holds geometry and an address file is given. A street file in CSV form has no geometry, so a run with it is never refused for that reason.
 - A street file in CSV form skips the four range fit checks and the run can still exit 0. The report says so in NOTICE lines and in the `Notices:` line.
 - The `--out` CSV holds findings only. The notices appear in the console report and in a `--format json` file, so a CSV from a run that skipped checks looks the same as a clean one.
 - Exit code 1 means an ERROR finding, and it also means the self-test failed or the catalog block is out of date. Do not use the code alone to tell a finding from a tool fault outside a normal run.
 - A CSV whose first line is blank is refused with exit 2 and the message `the file has no header row`. The message does not name the blank line.
+- The console report prints input values as they are, so a value that holds terminal escape codes can change what a terminal shows. Read untrusted files through `--out` or `--format json`, or filter the output.
+- Exit 2 can also come from an internal `ValueError`, so read the message before you blame the input file.
 - An unexpected crash (exit 70) prints a Python traceback to stderr. The traceback can quote a value from an input row.
 - The synthetic demo files use the state code `FL`. That is a state abbreviation, not a county identifier.
 - A path in a settings `[areas]` line or in the MSAG config is opened as written, so a UNC path makes Windows contact that host. Use settings and config files you wrote yourself.
